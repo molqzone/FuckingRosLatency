@@ -225,8 +225,9 @@ Units: latency in microseconds (µs), CPU in percent.
 Key points:
 
 - For 1440×1080 frames, cross-process `LinuxSharedTopic` delivery is about **89 µs**.
-- This is much lower than ROS 2 multi-process (**1.779 ms**), but still higher than ROS 2 intra-process (**26 µs**).
-- That is consistent with its position: it keeps process isolation while avoiding the serialization / deserialization overhead of ROS 2 multi-process transport.
+- This is much lower than ROS 2 multi-process (**1.779 ms**).
+- The direct peer here is ROS 2 **multi-process**, because both paths keep process isolation.
+- ROS 2 `intra-process` numbers remain in the table as a reference baseline, but that category maps to ordinary in-process `Topic`-style messaging rather than to this shared-topic benchmark.
 
 ---
 
@@ -256,7 +257,8 @@ Compared to 1440×1080:
 We can see:
 
 - After reducing the resolution to 320×240, `LinuxSharedTopic` latency drops to **73.6 µs**.
-- It remains lower than ROS 2 multi-process (**0.222 ms**), but does not beat ROS 2 intra-process (**24 µs**) because this is still a cross-process path.
+- It remains lower than ROS 2 multi-process (**0.222 ms**).
+- This is still a cross-process path, so it is not presented here as a same-category comparison against ROS 2 `intra-process`.
 
 Combined LibXR CPU across the whole run (publisher parent + subscriber child):
 
@@ -276,11 +278,13 @@ By communication mode, we can roughly summarize:
 2. **ROS 2 intra-process**
    - Latency: ~0.02–0.03 ms at both resolutions.
    - CPU: ~0.31% for 320×240; ~1.38% for 1440×1080.
-   - Eliminates IPC and extra scheduling overhead; this is the low-latency option within the ROS 2 framework.
+   - Eliminates IPC and extra scheduling overhead; this is the in-process low-latency option within the ROS 2 framework.
+   - This category is a better peer for ordinary in-process `Topic`-style messaging, not for `LinuxSharedTopic`.
 
 3. **LibXR LinuxSharedTopic (cross-process shared memory)**
    - Latency: about **89 µs** at 1440×1080 and **74 µs** at 320×240.
-   - Clearly lower than ROS 2 multi-process, but not directly comparable to ROS 2 intra-process because this path still crosses process boundaries.
+   - Its direct peer is ROS 2 multi-process, not ROS 2 intra-process.
+   - It is clearly lower than ROS 2 multi-process while still preserving process isolation.
    - CPU: about **1.80 %** total for publisher + subscriber across the whole benchmark run.
    - The reported number is **Publish -> subscriber-process Wait OK**, with the start timestamp taken after frame fill completes.
 
