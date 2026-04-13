@@ -6,6 +6,7 @@ set -eo pipefail
 WS="${WS:-$HOME/ros2_ws}"
 LOG_DIR="$WS/logs"
 BIN_PATH="$WS/build/libxr_tp_test/libxr_tp_test"
+BIN_NAME="$(basename "$BIN_PATH")"
 
 mkdir -p "$LOG_DIR"
 
@@ -19,20 +20,19 @@ if ! command -v pidstat >/dev/null 2>&1; then
   apt-get install -y sysstat
 fi
 
-# libxr_tp_test 是 colcon 包的话，build 需要 ROS 环境
-if [ -f /opt/ros/humble/setup.bash ]; then
-  # shellcheck disable=SC1091
-  source /opt/ros/humble/setup.bash
-else
-  echo "[ERROR] 找不到 /opt/ros/humble/setup.bash，确认镜像里有 ROS2 Humble。"
-  exit 1
-fi
-
 cd "$WS"
 
 ensure_binaries() {
   # 如果可执行文件不存在，自动 build 一次
   if [ ! -x "$BIN_PATH" ]; then
+    if [ -f /opt/ros/humble/setup.bash ]; then
+      # shellcheck disable=SC1091
+      source /opt/ros/humble/setup.bash
+    else
+      echo "[ERROR] 找不到 /opt/ros/humble/setup.bash，且当前缺少可执行文件 $BIN_PATH。"
+      exit 1
+    fi
+
     echo "[INFO] 找不到可执行文件 $BIN_PATH，开始 colcon build libxr_tp_test ..."
     colcon build --packages-select libxr_tp_test
     echo "[INFO] build 完成。"
@@ -41,30 +41,41 @@ ensure_binaries() {
 
 kill_all_test_procs() {
   echo "[INFO] 杀掉残留 libxr 测试进程和 pidstat..."
-  pkill -f "libxr_tp_test" || true
+  pkill -x "$BIN_NAME" || true
   pkill -f "pidstat -u" || true
 }
 
 analyze_cpu() {
   local file="$1"
   local label="$2"
+  local cmd_name="$3"
 
   if [ ! -f "$file" ]; then
     echo "[WARN] $label CPU: 日志文件不存在: $file"
     return
   fi
 
-  # pidstat: 前 3 行是表头，从第 4 行开始是数据；第 8 列是 %CPU
-  awk -v label="$label" '
-    NR > 3 {
-      sum += $8
-      n++
+  awk -v label="$label" -v cmd_name="$cmd_name" '
+    $1 == "Linux" || $1 == "#" || $1 == "Average:" || NF < 4 { next }
+    $NF != cmd_name { next }
+    {
+      key = $1
+      if ($2 == "AM" || $2 == "PM") {
+        key = $1 " " $2
+      }
+      sample_sum[key] += $(NF - 2)
     }
     END {
+      n = 0
+      sum = 0
+      for (k in sample_sum) {
+        sum += sample_sum[k]
+        n++
+      }
       if (n > 0) {
-        printf("[RESULT] %s CPU: samples=%d avg=%.2f%%\n", label, n, sum/n)
+        printf("[RESULT] %s CPU(total): samples=%d avg=%.2f%%\n", label, n, sum/n)
       } else {
-        printf("[RESULT] %s CPU: no data (file=%s)\n", label, FILENAME)
+        printf("[RESULT] %s CPU(total): no data (file=%s)\n", label, FILENAME)
       }
     }
   ' "$file"
@@ -72,7 +83,7 @@ analyze_cpu() {
 
 run_libxr_test() {
   echo
-  echo "====== LibXR image latency 测试开始（程序内部会依次测 1440x1080 / 320x240） ======"
+  echo "====== LibXR LinuxSharedTopic image latency 测试开始（程序内部会依次测 1440x1080 / 320x240） ======"
 
   kill_all_test_procs
   ensure_binaries
@@ -85,15 +96,15 @@ run_libxr_test() {
 
   echo "[INFO] libxr log: $LIBXR_LOG"
 
-  # 启动 libxr 基准测试
+  # 启动 LibXR LinuxSharedTopic 基准测试
   "$BIN_PATH" >"$LIBXR_LOG" 2>&1 &
   local PID_LIBXR=$!
-  echo "[INFO] libxr_tp_test PID=${PID_LIBXR}"
+  echo "[INFO] ${BIN_NAME} PID=${PID_LIBXR}"
 
   sleep 1
 
-  # pidstat 统计整个 libxr 进程生命周期的 CPU
-  pidstat -u 1 -p "$PID_LIBXR" >"$CPU_LIBXR_LOG" &
+  # 用命令名聚合父子进程，避免共享 topic 的 subscriber 子进程被漏记。
+  pidstat -u -h -C "$BIN_NAME" 1 >"$CPU_LIBXR_LOG" &
   local PID_PIDSTAT_LIBXR=$!
 
   # 等待 libxr 测试结束
@@ -113,7 +124,7 @@ run_libxr_test() {
 
   echo
   echo "------ LibXR CPU 统计 ------"
-  analyze_cpu "$CPU_LIBXR_LOG" "libxr_tp_test"
+  analyze_cpu "$CPU_LIBXR_LOG" "libxr_linux_shared_topic" "$BIN_NAME"
 }
 
 # ===== 主流程 =====

@@ -1,245 +1,309 @@
 #include "libxr.hpp"
-#include "libxr_def.hpp"
-#include "logger.hpp"
-#include "message.hpp"
 
-#include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <memory>
 #include <thread>
 
-using namespace LibXR;
-
-// ========== 通用配置 ==========
-
-static constexpr uint32_t NUM_FRAMES = 300;     // 每种分辨率发多少帧
-static constexpr double PUBLISH_RATE_HZ = 30.0; // 模拟 ROS 30Hz
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using Clock = std::chrono::steady_clock;
-using TimePoint = Clock::time_point;
 using Micro = std::chrono::duration<double, std::micro>;
 
-// 简单统计结构
-struct LatencyStats {
+static constexpr uint32_t NUM_FRAMES = 300;
+static constexpr double PUBLISH_RATE_HZ = 30.0;
+
+struct LatencyStats
+{
   double min_us = std::numeric_limits<double>::max();
   double max_us = 0.0;
   double sum_us = 0.0;
   uint32_t count = 0;
 
-  void add(double us) {
+  void Add(double us)
+  {
     if (us < min_us)
+    {
       min_us = us;
+    }
     if (us > max_us)
+    {
       max_us = us;
+    }
     sum_us += us;
     ++count;
   }
 
-  void log(const char *name) const {
-    if (count == 0) {
-      XR_LOG_WARN("%s: no samples", name);
+  void Log(const char* label) const
+  {
+    if (count == 0)
+    {
+      std::printf("[RESULT] %s: no samples\n", label);
       return;
     }
-    double avg = sum_us / static_cast<double>(count);
-    // 用 PASS 保证一定能看到结果
-    XR_LOG_PASS("[RESULT] %s: count=%u avg=%.3f us min=%.3f us max=%.3f us",
-                name, count, avg, min_us, max_us);
+
+    const double avg_us = sum_us / static_cast<double>(count);
+    std::printf("[RESULT] %s: count=%u avg=%.3f us min=%.3f us max=%.3f us\n", label, count,
+                avg_us, min_us, max_us);
   }
 };
 
-// 发布时间戳（按 seq 索引）
-static std::array<TimePoint, NUM_FRAMES> g_pub_time{};
+struct ChildResult
+{
+  LatencyStats stats = {};
+  uint32_t status = 0;
+};
 
-// 回调 & 同步统计
-static LatencyStats g_cb_entry_stats;    // 发布 -> 回调入口
-static LatencyStats g_cb_memcpy_stats;   // 回调里的 memcpy 拷贝
-static LatencyStats g_cb_fastcopy_stats; // 回调里的 FastCopy 拷贝
-static LatencyStats g_sync_stats;        // 发布 -> Sync Wait OK
-
-static void ResetStats() {
-  g_pub_time.fill(TimePoint{});
-  g_cb_entry_stats = LatencyStats{};
-  g_cb_memcpy_stats = LatencyStats{};
-  g_cb_fastcopy_stats = LatencyStats{};
-  g_sync_stats = LatencyStats{};
+uint64_t NowNs()
+{
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch())
+          .count());
 }
 
-// ========== 两种图像类型 ==========
+bool WriteAll(int fd, const void* buffer, size_t size)
+{
+  const auto* bytes = static_cast<const uint8_t*>(buffer);
+  size_t written_total = 0;
+  while (written_total < size)
+  {
+    const ssize_t written = write(fd, bytes + written_total, size - written_total);
+    if (written > 0)
+    {
+      written_total += static_cast<size_t>(written);
+      continue;
+    }
+    if (written < 0 && errno == EINTR)
+    {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
 
-template <uint32_t W, uint32_t H> struct ImageFrameT {
+bool ReadAll(int fd, void* buffer, size_t size)
+{
+  auto* bytes = static_cast<uint8_t*>(buffer);
+  size_t read_total = 0;
+  while (read_total < size)
+  {
+    const ssize_t read_size = read(fd, bytes + read_total, size - read_total);
+    if (read_size > 0)
+    {
+      read_total += static_cast<size_t>(read_size);
+      continue;
+    }
+    if (read_size < 0 && errno == EINTR)
+    {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+template <typename TopicType>
+bool WaitForSubscriberAttach(TopicType& topic)
+{
+  for (int retry = 0; retry < 500 && topic.GetSubscriberNum() == 0; ++retry)
+  {
+    usleep(1000);
+  }
+  return topic.GetSubscriberNum() > 0;
+}
+
+template <uint32_t W, uint32_t H>
+struct SharedImageFrameT
+{
   static constexpr uint32_t WIDTH = W;
   static constexpr uint32_t HEIGHT = H;
 
   uint32_t width;
   uint32_t height;
-  uint32_t seq;            // 帧号
-  uint8_t data[W * H * 3]; // RGB888
+  uint32_t seq;
+  uint64_t pub_ns;
+  uint8_t data[W * H * 3];
 };
 
-using ImageFrame1440 = ImageFrameT<1440, 1080>;
-using ImageFrame320 = ImageFrameT<320, 240>;
-
-// ========== 单一分辨率测试函数（堆上分配 Frame） ==========
+using SharedImageFrame1440 = SharedImageFrameT<1440, 1080>;
+using SharedImageFrame320 = SharedImageFrameT<320, 240>;
 
 template <typename Frame>
-void RunImageTest(const char *label, const char *topic_name,
-                  LibXR::Topic::Domain &domain) {
-  ResetStats();
-
-  XR_LOG_INFO("===== Test %s (%ux%u) BEGIN =====", label, Frame::WIDTH,
-              Frame::HEIGHT);
-
-  // 1. 创建 Topic：cache=false, check_length=false
-  auto topic = LibXR::Topic::CreateTopic<Frame>(topic_name, &domain,
-                                                /*multi_publisher=*/false,
-                                                /*cache=*/false,
-                                                /*check_length=*/false);
-
-  // 2. 同步订阅（独立线程 Wait），数据缓冲放在堆上
-  auto sync_frame = std::make_unique<Frame>();
-  LibXR::Topic::SyncSubscriber<Frame> sync_sub(topic, *sync_frame);
-
-  // 3. 回调订阅，回调缓冲放在堆上
-  auto cb_frame = std::make_unique<Frame>();
-
-  auto cb = LibXR::Topic::Callback::Create(
-      [](bool /*in_isr*/, Frame *dst, LibXR::RawData &raw) {
-        auto now = Clock::now();
-        auto *src = reinterpret_cast<Frame *>(raw.addr_);
-        uint32_t seq = src->seq;
-
-        // ① 发布 -> 回调入口 延迟
-        if (seq < NUM_FRAMES) {
-          TimePoint pub_tp = g_pub_time[seq];
-          if (pub_tp.time_since_epoch().count() != 0) {
-            double entry_us =
-                std::chrono::duration_cast<Micro>(now - pub_tp).count();
-            g_cb_entry_stats.add(entry_us);
-            XR_LOG_DEBUG("[CB][%ux%u] seq=%u entry=%.3f us", Frame::WIDTH,
-                         Frame::HEIGHT, seq, entry_us);
-          }
-        }
-
-        // 先正常拷贝一次到业务缓冲（保持原来的语义）
-        *dst = *src;
-
-        // ② memcpy vs FastCopy 对比：拷贝整个 Frame 结构
-        static Frame memcpy_buf;
-        static Frame fastcopy_buf;
-
-        auto t1 = Clock::now();
-        std::memcpy(&memcpy_buf, src, sizeof(Frame));
-        auto t2 = Clock::now();
-        LibXR::Memory::FastCopy(&fastcopy_buf, src, sizeof(Frame));
-        auto t3 = Clock::now();
-
-        double memcpy_us = std::chrono::duration_cast<Micro>(t2 - t1).count();
-        double fastcopy_us = std::chrono::duration_cast<Micro>(t3 - t2).count();
-
-        g_cb_memcpy_stats.add(memcpy_us);
-        g_cb_fastcopy_stats.add(fastcopy_us);
-
-        XR_LOG_DEBUG("[CB][%ux%u] seq=%u memcpy=%.3f us fastcopy=%.3f us",
-                     Frame::WIDTH, Frame::HEIGHT, seq, memcpy_us, fastcopy_us);
-      },
-      cb_frame.get());
-
-  topic.RegisterCallback(cb);
-
-  XR_LOG_PASS("Topic & subscribers for %s (%ux%u) set up", label, Frame::WIDTH,
-              Frame::HEIGHT);
-
-  // 4. 同步订阅线程
-  std::thread sync_thread([&]() {
-    for (uint32_t i = 0; i < NUM_FRAMES; ++i) {
-      auto ec = sync_sub.Wait(5000); // 防止挂死：5s 超时
-      auto now = Clock::now();
-
-      if (ec == ErrorCode::OK) {
-        uint32_t seq = sync_frame->seq;
-        if (seq < NUM_FRAMES) {
-          TimePoint pub_tp = g_pub_time[seq];
-          if (pub_tp.time_since_epoch().count() != 0) {
-            double sync_us =
-                std::chrono::duration_cast<Micro>(now - pub_tp).count();
-            g_sync_stats.add(sync_us);
-            XR_LOG_DEBUG("[SYNC][%ux%u] seq=%u latency=%.3f us", Frame::WIDTH,
-                         Frame::HEIGHT, seq, sync_us);
-          } else {
-            XR_LOG_WARN("[SYNC][%ux%u] seq=%u has no pub timestamp",
-                        Frame::WIDTH, Frame::HEIGHT, seq);
-          }
-        } else {
-          XR_LOG_WARN("[SYNC][%ux%u] seq=%u out of range", Frame::WIDTH,
-                      Frame::HEIGHT, seq);
-        }
-      } else {
-        XR_LOG_ERROR("[SYNC][%ux%u] Wait failed/timeout, ec=%d", Frame::WIDTH,
-                     Frame::HEIGHT, static_cast<int>(ec));
-      }
-    }
-
-    XR_LOG_PASS("Sync subscriber thread for %s finished", label);
-  });
-
-  // 5. 发布循环（main 线程），发布缓冲也在堆上
-  const double period_sec = 1.0 / PUBLISH_RATE_HZ;
-
-  auto frame = std::make_unique<Frame>();
+void FillFrame(Frame* frame, uint32_t seq)
+{
   frame->width = Frame::WIDTH;
   frame->height = Frame::HEIGHT;
-
-  for (uint32_t seq = 0; seq < NUM_FRAMES; ++seq) {
-    frame->seq = seq;
-
-    // 填充一点数据，模拟图像负载
-    std::memset(frame->data, static_cast<int>(seq & 0xFF), sizeof(frame->data));
-
-    // 记录发布时间（给 entry/sync 统计用）
-    g_pub_time[seq] = Clock::now();
-
-    topic.Publish(*frame);
-
-    std::this_thread::sleep_for(std::chrono::duration<double>(period_sec));
-  }
-
-  XR_LOG_PASS("Publisher for %s sent %u frames", label, NUM_FRAMES);
-
-  if (sync_thread.joinable()) {
-    sync_thread.join();
-  }
-
-  // 6. 打印统计结果（用 PASS，肯定能看到）
-  XR_LOG_PASS("===== Stats for %s (%ux%u) =====", label, Frame::WIDTH,
-              Frame::HEIGHT);
-  g_cb_entry_stats.log("Callback entry latency (Publish -> CB)");
-  g_cb_memcpy_stats.log("Callback memcpy latency (std::memcpy Frame)");
-  g_cb_fastcopy_stats.log(
-      "Callback FastCopy latency (LibXR::Memory::FastCopy Frame)");
-  g_sync_stats.log("Sync subscriber latency (Publish -> Wait OK)");
-  XR_LOG_PASS("===== Test %s (%ux%u) END =====", label, Frame::WIDTH,
-              Frame::HEIGHT);
+  frame->seq = seq;
+  std::memset(frame->data, static_cast<int>(seq & 0xFFU), sizeof(frame->data));
+  frame->pub_ns = NowNs();
 }
 
-// ========== main：依次测试 1440×1080 和 320×240 ==========
+template <typename Frame>
+bool ValidateFrame(const Frame* frame, uint32_t expected_seq)
+{
+  if (frame == nullptr)
+  {
+    return false;
+  }
 
-int main() {
+  if (frame->width != Frame::WIDTH || frame->height != Frame::HEIGHT || frame->seq != expected_seq)
+  {
+    return false;
+  }
+
+  const uint8_t expected_byte = static_cast<uint8_t>(expected_seq & 0xFFU);
+  return frame->data[0] == expected_byte &&
+         frame->data[(sizeof(frame->data) / sizeof(frame->data[0])) - 1U] == expected_byte;
+}
+
+template <typename Frame>
+void RunSharedTopicCase(const char* label, const char* topic_name)
+{
+  using Topic = LibXR::LinuxSharedTopic<Frame>;
+  using Subscriber = typename Topic::SyncSubscriber;
+  using Data = typename Topic::Data;
+
+  int ready_pipe[2] = {-1, -1};
+  int stats_pipe[2] = {-1, -1};
+  if (pipe(ready_pipe) != 0 || pipe(stats_pipe) != 0)
+  {
+    std::printf("[RESULT] %s: pipe failed\n", label);
+    return;
+  }
+
+  LibXR::LinuxSharedTopicConfig config = {};
+  config.slot_num = 4;
+  config.subscriber_num = 1;
+  config.queue_num = 4;
+
+  (void)Topic::Remove(topic_name);
+
+  Topic publisher(topic_name, config);
+  if (!publisher.Valid())
+  {
+    std::printf("[RESULT] %s: publisher init failed\n", label);
+    return;
+  }
+
+  pid_t child = fork();
+  if (child < 0)
+  {
+    std::printf("[RESULT] %s: fork failed\n", label);
+    return;
+  }
+
+  if (child == 0)
+  {
+    close(ready_pipe[0]);
+    close(stats_pipe[0]);
+
+    Subscriber subscriber(topic_name);
+    if (!subscriber.Valid())
+    {
+      _exit(2);
+    }
+
+    const uint8_t ready = 1;
+    if (!WriteAll(ready_pipe[1], &ready, sizeof(ready)))
+    {
+      _exit(3);
+    }
+    close(ready_pipe[1]);
+
+    ChildResult result = {};
+    for (uint32_t expected_seq = 0; expected_seq < NUM_FRAMES; ++expected_seq)
+    {
+      Data data;
+      if (subscriber.Wait(data, 5000) != LibXR::ErrorCode::OK)
+      {
+        result.status = 1;
+        break;
+      }
+
+      const Frame* frame = data.GetData();
+      if (!ValidateFrame(frame, expected_seq))
+      {
+        result.status = 2;
+        break;
+      }
+
+      result.stats.Add(static_cast<double>(NowNs() - frame->pub_ns) / 1000.0);
+    }
+
+    (void)WriteAll(stats_pipe[1], &result, sizeof(result));
+    close(stats_pipe[1]);
+    _exit(0);
+  }
+
+  close(ready_pipe[1]);
+  close(stats_pipe[1]);
+
+  uint8_t ready = 0;
+  if (!ReadAll(ready_pipe[0], &ready, sizeof(ready)) || !WaitForSubscriberAttach(publisher))
+  {
+    close(ready_pipe[0]);
+    close(stats_pipe[0]);
+    std::printf("[RESULT] %s: subscriber attach failed\n", label);
+    return;
+  }
+  close(ready_pipe[0]);
+
+  const auto period = std::chrono::duration<double>(1.0 / PUBLISH_RATE_HZ);
+  for (uint32_t seq = 0; seq < NUM_FRAMES; ++seq)
+  {
+    Data data;
+    while (publisher.CreateData(data) != LibXR::ErrorCode::OK)
+    {
+      std::this_thread::yield();
+    }
+
+    FillFrame(data.GetData(), seq);
+
+    if (publisher.Publish(data) != LibXR::ErrorCode::OK)
+    {
+      std::printf("[RESULT] %s: publish failed at seq=%u\n", label, seq);
+      kill(child, SIGKILL);
+      waitpid(child, nullptr, 0);
+      close(stats_pipe[0]);
+      (void)Topic::Remove(topic_name);
+      return;
+    }
+
+    std::this_thread::sleep_for(period);
+  }
+
+  ChildResult result = {};
+  const bool read_ok = ReadAll(stats_pipe[0], &result, sizeof(result));
+  close(stats_pipe[0]);
+
+  int status = 0;
+  waitpid(child, &status, 0);
+  if (!read_ok || !WIFEXITED(status) || WEXITSTATUS(status) != 0 || result.status != 0)
+  {
+    std::printf("[RESULT] %s: subscriber failed status=%u exit=%d\n", label, result.status,
+                WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+    (void)Topic::Remove(topic_name);
+    return;
+  }
+
+  result.stats.Log(label);
+  (void)Topic::Remove(topic_name);
+}
+
+int main()
+{
   LibXR::PlatformInit();
-  XR_LOG_PASS("Platform initialized");
 
-  LibXR::Topic::Domain domain("image_domain");
-
-  // 大图 1440x1080
-  XR_LOG_PASS("Run test image_1440x1080");
-  RunImageTest<ImageFrame1440>("image_1440x1080", "camera/image_1440", domain);
-
-  // 小图 320x240
-  XR_LOG_PASS("Run test image_320x240");
-  RunImageTest<ImageFrame320>("image_320x240", "camera/image_320", domain);
-
-  XR_LOG_PASS("All image latency tests finished");
+  RunSharedTopicCase<SharedImageFrame1440>(
+      "LinuxSharedTopic latency (Publish -> Wait OK) 1440x1080", "bench/linux_shared_1440");
+  RunSharedTopicCase<SharedImageFrame320>(
+      "LinuxSharedTopic latency (Publish -> Wait OK) 320x240", "bench/linux_shared_320");
   return 0;
 }

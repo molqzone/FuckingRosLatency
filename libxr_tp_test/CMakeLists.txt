@@ -4,10 +4,7 @@ project(libxr_tp_test)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-## 强制启用警告
-add_definitions(-Wall -Werror)
-
-add_compile_options(-g -O3)
+add_compile_options(-g -O3 -Wall)
 
 ## 导出编译命令以便使用 clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

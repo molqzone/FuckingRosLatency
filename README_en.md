@@ -1,6 +1,6 @@
 # FuckingRosLatency
 
-Compare the **latency** and **CPU usage** of the ROS 2 image transport pipeline and the LibXR::Topic custom message system.  
+Compare the **latency** and **CPU usage** of the ROS 2 image transport pipeline and `LibXR::LinuxSharedTopic` shared-memory IPC.  
 All tests use RGB image frames as payload, with a publish rate of 30 Hz, compiled with `-O3`.
 
 ---
@@ -20,7 +20,7 @@ ros2_ws/
 └── libxr_tp_test/
     ├── CMakeLists.txt                 # LibXR test package
     ├── libxr/                         # LibXR source (cloned from upstream repo)
-    └── libxr_tp_test.cpp              # LibXR image benchmark program
+    └── libxr_tp_test.cpp              # LibXR LinuxSharedTopic image benchmark program
 ```
 
 ---
@@ -146,43 +146,39 @@ Script `auto_bench_image_latency.sh`:
 
 ### LibXR
 
-Program `libxr_tp_test.cpp` (single executable) runs benchmarks for two resolutions in sequence:
+Program `libxr_tp_test.cpp` (single executable) directly benchmarks the cross-process path of `LibXR::LinuxSharedTopic<Frame>` for two resolutions in sequence:
 
-- For each frame type (1440×1080 / 320×240), it creates a `Topic<Frame>`.
-- Registers two subscribers:
-  - a synchronous subscriber (dedicated thread calling `Wait()`), and
-  - a callback subscriber (invokes a callback as soon as a frame is received).
+- For each frame type (1440×1080 / 320×240), it creates one shared topic;
+- the parent process acts as publisher, and a forked child process acts as synchronous subscriber;
+- the publisher sends `NUM_FRAMES = 300` frames at 30 Hz, and for each frame:
+  1. calls `CreateData()` to allocate one shared payload slot;
+  2. fills RGB888 image data for the target resolution;
+  3. writes `pub_ns = now()` **after the fill is complete**;
+  4. calls `Publish()`.
 
-- The main thread sends `NUM_FRAMES = 300` frames at 30 Hz. For each frame:
-  1. Fills a frame buffer with RGB888 data for the given resolution;
-  2. **After the frame is filled**, records `g_pub_time[seq] = now()`;
-  3. Calls `topic.Publish(frame)`.
+Therefore, the measured **Publish -> Wait OK** latency **excludes the frame-fill cost**.
 
-  Therefore, all latency statistics that use `g_pub_time[seq]` as the start time **exclude the frame-fill cost**.
+In the subscriber child process:
 
-- In the callback subscriber:
-  1. Uses `seq` to look up `g_pub_time[seq]` and computes the **publish → callback-entry** latency;
-  2. Performs a full-frame copy into a business buffer (simulating real processing);
-  3. Performs two additional full-frame copies and times them separately:
-     - one using `std::memcpy`, and
-     - one using `LibXR::Memory::FastCopy`.
-  4. These memcpy/FastCopy timings reflect only the **extra business-side copy cost** and are decoupled from the publish → callback-entry latency.
-
-- Synchronous subscriber thread:
-  - In a dedicated thread, loops on `topic.Wait(frame)`.
-  - When `Wait()` returns, uses the frame’s `seq` and `g_pub_time[seq]` to compute the **publish → Wait success** latency.
-  - LibXR’s synchronous subscription internally copies/moves the message into a buffer visible to the subscriber thread to ensure cross-thread safety.
+- it loops on `subscriber.Wait(data)`;
+- validates the frame sequence, resolution, and first/last payload bytes;
+- computes one-way latency as `now() - pub_ns`.
 
 Script `auto_bench_libxr_image_latency.sh`:
 
-- While the benchmark program is running, uses `pidstat` to record the process’s CPU usage.
-- Extracts `[RESULT]` lines from the program logs and summarizes latency statistics and CPU usage.
+- uses `pidstat -C libxr_tp_test` to capture all same-name parent/child processes;
+- aggregates `%CPU` by time slice so the reported CPU is the total cost of the whole shared-topic pipeline;
+- extracts `[RESULT]` lines from the benchmark logs and summarizes latency and CPU usage.
 
 ---
 
 ## Test Configuration
 
-All results come from the [latest GitHub Actions run](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824), with the following configuration:
+ROS 2 results come from the [latest GitHub Actions run](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824). LibXR LinuxSharedTopic results come from the latest Ubuntu24 rerun:
+
+- `/home/xiao/runs/fuck_ros_shared_topic_20260413T223805Z`
+
+Unified configuration:
 
 - OS: Ubuntu 22.04 (GitHub-hosted runner)
 - ROS: Humble
@@ -222,19 +218,15 @@ Observations:
 
 Units: latency in microseconds (µs), CPU in percent.
 
-| Metric                                                    | Value                                                        |
-| --------------------------------------------------------- | ------------------------------------------------------------ |
-| Callback entry latency (Publish → CB)                     | count=300, avg = **0.549 µs** (min=0.181, max=2.144)         |
-| Callback memcpy latency (std::memcpy Frame)               | count=300, avg = **299.693 µs** (min=206.427, max=1528.852)  |
-| Callback FastCopy latency (LibXR::Memory::FastCopy Frame) | count=300, avg = **249.836 µs** (min=201.667, max=832.058)   |
-| Sync subscriber latency (Publish → Wait OK)               | count=300, avg = **1063.704 µs** (min=929.126, max=2746.869) |
-| Process CPU (`libxr_tp_test`)                             | samples=19, avg = **2.00 %**                                 |
+| Metric                                          | Value |
+| ----------------------------------------------- | ----- |
+| LinuxSharedTopic latency (Publish → Wait OK)    | count=300, avg = **89.090 µs** (min=21.675, max=127.630) |
 
 Key points:
 
-- Publish → callback-entry latency is **sub-microsecond**, showing that LibXR’s message dispatch itself has extremely low overhead.
-- Multiple full-frame copies in the callback (business copy + extra `memcpy` + extra `FastCopy`) dominate the time and CPU cost.
-- The publish → synchronous subscriber `Wait` latency is ~1.06 ms, including user-level synchronization and thread scheduling.
+- For 1440×1080 frames, cross-process `LinuxSharedTopic` delivery is about **89 µs**.
+- This is much lower than ROS 2 multi-process (**1.779 ms**), but still higher than ROS 2 intra-process (**26 µs**).
+- That is consistent with its position: it keeps process isolation while avoiding the serialization / deserialization overhead of ROS 2 multi-process transport.
 
 ---
 
@@ -257,19 +249,18 @@ Compared to 1440×1080:
 
 #### LibXR
 
-| Metric                                                    | Value                                                     |
-| --------------------------------------------------------- | --------------------------------------------------------- |
-| Callback entry latency (Publish → CB)                     | count=300, avg = **0.447 µs** (min=0.220, max=1.262)      |
-| Callback memcpy latency (std::memcpy Frame)               | count=300, avg = **13.197 µs** (min=9.448, max=106.810)   |
-| Callback FastCopy latency (LibXR::Memory::FastCopy Frame) | count=300, avg = **13.778 µs** (min=10.289, max=109.364)  |
-| Sync subscriber latency (Publish → Wait OK)               | count=300, avg = **100.117 µs** (min=61.327, max=278.458) |
-| Process CPU (`libxr_tp_test`)                             | samples=19, avg = **2.00 %**                              |
+| Metric                                          | Value |
+| ----------------------------------------------- | ----- |
+| LinuxSharedTopic latency (Publish → Wait OK)    | count=300, avg = **73.584 µs** (min=18.503, max=117.085) |
 
 We can see:
 
-- Reducing the resolution brings the full-frame copy time down to ~13 µs. `memcpy` and `FastCopy` are close on this workload.
-- Message dispatch (publish → callback-entry) remains below 1 µs.
-- Synchronous subscription latency drops to ~0.1 ms, much smaller than in the high-resolution case.
+- After reducing the resolution to 320×240, `LinuxSharedTopic` latency drops to **73.6 µs**.
+- It remains lower than ROS 2 multi-process (**0.222 ms**), but does not beat ROS 2 intra-process (**24 µs**) because this is still a cross-process path.
+
+Combined LibXR CPU across the whole run (publisher parent + subscriber child):
+
+- `libxr_linux_shared_topic CPU(total)`: samples=10, avg = **1.80 %**
 
 ---
 
@@ -287,23 +278,14 @@ By communication mode, we can roughly summarize:
    - CPU: ~0.31% for 320×240; ~1.38% for 1440×1080.
    - Eliminates IPC and extra scheduling overhead; this is the low-latency option within the ROS 2 framework.
 
-3. **LibXR callback path (Publish → Callback Entry)**
-   - Latency: sub-microsecond (0.4–0.5 µs), clearly lower than ROS intra-process.
-   - Almost independent of resolution; dominated by LibXR’s internal path.
-
-4. **LibXR full-frame copies inside the callback**
-   - In this benchmark, each frame undergoes **three full copies** in the callback:
-     - 1× business-buffer copy,
-     - 1× `std::memcpy` timing,
-     - 1× `FastCopy` timing.
-   - This yields around 2% CPU usage under intentionally heavy copy pressure and does not represent an optimized real-world design.
-
-5. **LibXR synchronous subscription path (Publish → Wait OK)**
-   - ~1.06 ms at high resolution, ~0.10 ms at low resolution.
-   - Affected by user-level synchronization and thread scheduling; this is a “cross-thread + synchronous” end-to-end figure.
+3. **LibXR LinuxSharedTopic (cross-process shared memory)**
+   - Latency: about **89 µs** at 1440×1080 and **74 µs** at 320×240.
+   - Clearly lower than ROS 2 multi-process, but not directly comparable to ROS 2 intra-process because this path still crosses process boundaries.
+   - CPU: about **1.80 %** total for publisher + subscriber across the whole benchmark run.
+   - The reported number is **Publish -> subscriber-process Wait OK**, with the start timestamp taken after frame fill completes.
 
 This repository can serve as a base for further experiments, for example:
 
-- Evaluating different threading models and synchronization strategies and their impact on subscription latency;
-- Building longer processing pipelines and measuring end-to-end behavior;
-- Validating copy strategies under different CPU/memory topologies (many-core, NUMA, etc.).
+- Comparing ROS 2 multi-process / intra-process against shared-memory IPC under more boundary conditions;
+- Evaluating higher frame rates and larger image sizes;
+- Building longer processing pipelines and measuring end-to-end behavior.

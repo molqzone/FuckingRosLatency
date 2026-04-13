@@ -1,6 +1,6 @@
 # FuckingRosLatency
 
-对比 ROS 2 图像传输链路与 LibXR::Topic 自定义消息系统在 **延迟** 和 **CPU 占用** 上的表现。  
+对比 ROS 2 图像传输链路与 `LibXR::LinuxSharedTopic` 共享内存 IPC 在 **延迟** 和 **CPU 占用** 上的表现。  
 所有测试均以 RGB 图像帧为载荷，发布频率 30 Hz，编译使用 `-O3`。
 
 ---
@@ -20,7 +20,7 @@ ros2_ws/
 └── libxr_tp_test/
     ├── CMakeLists.txt                 # LibXR 测试包
     ├── libxr/                         # LibXR 源码（上游仓库克隆）
-    └── libxr_tp_test.cpp              # LibXR 图像基准程序
+    └── libxr_tp_test.cpp              # LibXR LinuxSharedTopic 图像基准程序
 ```
 
 ---
@@ -157,43 +157,39 @@ WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
 
 ### LibXR
 
-程序 `libxr_tp_test.cpp`（单一可执行），对两个分辨率依次执行：
+程序 `libxr_tp_test.cpp`（单一可执行）直接测试 `LibXR::LinuxSharedTopic<Frame>` 的跨进程路径，对两个分辨率依次执行：
 
-- 为每种帧类型（1440×1080 / 320×240）创建 `Topic<Frame>`。
-- 注册两个订阅者：
-  - 一个同步订阅者（独立线程调用 `Wait()`）；
-  - 一个回调订阅者（收到帧立刻执行回调函数）。
+- 对每种帧类型（1440×1080 / 320×240）创建一个共享 topic；
+- 父进程作为 publisher，子进程作为 synchronous subscriber；
+- 主进程以 30 Hz 发送 `NUM_FRAMES = 300` 帧，每帧流程为：
+  1. 调用 `CreateData()` 申请共享 payload；
+  2. 填充对应分辨率的 RGB888 数据；
+  3. **完成帧填充后** 写入 `pub_ns = now()`；
+  4. 调用 `Publish()`。
 
-- 主线程以 30 Hz 发送 `NUM_FRAMES = 300` 帧，每帧流程为：
-  1. 填充对应分辨率的 RGB888 数据到帧缓冲；
-  2. **完成帧填充后**，记录 `g_pub_time[seq] = now()`；
-  3. 调用 `topic.Publish(frame)`。
+因此，统计的 **Publish -> Wait OK** 延迟同样**不包含帧填充时间**。
 
-  因此，所有用 `g_pub_time[seq]` 作为起点的延迟统计，**不包含帧填充时间**。
+子进程中：
 
-- 回调订阅者中：
-  1. 根据 `seq` 查 `g_pub_time[seq]`，计算 **发布 → 回调入口** 延迟；
-  2. 再进行一次完整帧拷贝到业务缓冲区（模拟真实处理逻辑）；
-  3. 额外执行两次完整帧拷贝并分别计时：
-     - 一次使用 `std::memcpy`；
-     - 一次使用 `LibXR::Memory::FastCopy`。
-  4. 这些 memcpy/FastCopy 的计时仅反映 **业务侧额外拷贝** 的成本，与“发布 → 回调入口”的延迟解耦。
-
-- 同步订阅线程：
-  - 独立线程中循环调用 `topic.Wait(frame)`。
-  - 当 `Wait()` 返回时，根据帧内的 `seq` 和 `g_pub_time[seq]` 计算 **发布 → Wait 成功** 的延迟。
-  - LibXR 的同步订阅在内部会将消息拷贝 / 迁移到订阅线程可见的缓冲区，以保证跨线程安全；
+- 循环调用 `subscriber.Wait(data)`；
+- 校验帧号、分辨率和首尾像素；
+- 用 `now() - pub_ns` 计算 **发布 → 订阅进程 Wait 成功** 的一程延迟。
 
 脚本 `auto_bench_libxr_image_latency.sh`：
 
-- 启动基准程序的同时，用 `pidstat` 记录整个进程 CPU 占用。
-- 从程序日志中抽取 `[RESULT]` 行，并汇总延迟统计和 CPU 占用。
+- 启动基准程序的同时，用 `pidstat -C libxr_tp_test` 统计同名父/子进程；
+- 以时间片为单位聚合父、子两边的 `%CPU`，给出整个共享 topic 链路的总 CPU 占用；
+- 从程序日志中抽取 `[RESULT]` 行，并汇总延迟和 CPU。
 
 ---
 
 ## 测试配置
 
-所有结果均来自 GitHub Actions 上[最近一次运行](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824)，配置如下：
+ROS 2 结果来自 GitHub Actions 上[最近一次运行](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824)；LibXR LinuxSharedTopic 结果来自 Ubuntu24 主机 `MD-063744` 上的最新实跑：
+
+- `/home/xiao/runs/fuck_ros_shared_topic_20260413T223805Z`
+
+统一配置如下：
 
 - OS：Ubuntu 22.04（GitHub 托管 runner）
 - ROS：Humble
@@ -233,19 +229,15 @@ WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
 
 单位：延迟为微秒（µs），CPU 为百分比。
 
-| 指标                                                     | 数值                                      |
-|----------------------------------------------------------|-------------------------------------------|
-| Callback entry latency (Publish -> CB)                   | count=300，avg = **0.549 µs** (min=0.181, max=2.144) |
-| Callback memcpy latency (std::memcpy Frame)              | count=300，avg = **299.693 µs** (min=206.427, max=1528.852) |
-| Callback FastCopy latency (LibXR::Memory::FastCopy Frame)| count=300，avg = **249.836 µs** (min=201.667, max=832.058) |
-| Sync subscriber latency (Publish -> Wait OK)             | count=300，avg = **1063.704 µs** (min=929.126, max=2746.869) |
-| 进程 CPU（libxr_tp_test）                                | samples=19，avg = **2.00 %**              |
+| 指标                                            | 数值 |
+|-------------------------------------------------|------|
+| LinuxSharedTopic latency (Publish -> Wait OK)   | count=300，avg = **89.090 µs** (min=21.675, max=127.630) |
 
 关键点：
 
-- 发布 → 回调入口延迟在 **亚微秒级**，说明 LibXR 的消息分发本身开销极低。
-- 回调中对整帧的多次拷贝（业务拷贝 + 额外 `memcpy` + 额外 `FastCopy`）是主要时间和 CPU 成本。
-- 发布 → 同步订阅线程 `Wait` 返回的延迟在 ~1.06 ms，包含用户层同步与线程调度等因素。
+- 对 1440×1080 大图像，`LinuxSharedTopic` 的跨进程同步接收延迟约 **89 µs**。
+- 这个数字明显低于 ROS 2 多进程的 **1.779 ms**，但仍高于 ROS 2 intra-process 的 **26 µs**；
+- 这也符合它的定位：保留进程隔离，同时避免 ROS 2 多进程链路上的序列化 / 反序列化开销。
 
 ---
 
@@ -268,19 +260,19 @@ WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
 
 #### LibXR
 
-| 指标                                                     | 数值                                      |
-|----------------------------------------------------------|-------------------------------------------|
-| Callback entry latency (Publish -> CB)                   | count=300，avg = **0.447 µs** (min=0.220, max=1.262) |
-| Callback memcpy latency (std::memcpy Frame)              | count=300，avg = **13.197 µs** (min=9.448, max=106.810) |
-| Callback FastCopy latency (LibXR::Memory::FastCopy Frame)| count=300，avg = **13.778 µs** (min=10.289, max=109.364) |
-| Sync subscriber latency (Publish -> Wait OK)             | count=300，avg = **100.117 µs** (min=61.327, max=278.458) |
-| 进程 CPU（libxr_tp_test）                                | samples=19，avg = **2.00 %**              |
+| 指标                                            | 数值 |
+|-------------------------------------------------|------|
+| LinuxSharedTopic latency (Publish -> Wait OK)   | count=300，avg = **73.584 µs** (min=18.503, max=117.085) |
 
 可以看到：
 
-- 分辨率降低后，整帧拷贝时间下降到 ~13 µs 量级，`memcpy` 与 `FastCopy` 差异不大。
-- 消息分发（发布 → 回调入口）仍然保持在 1 µs 以内。
-- 同步订阅延迟降到 ~0.1 ms，明显小于大分辨率场景。
+- 分辨率降到 320×240 后，`LinuxSharedTopic` 的跨进程延迟降到 **73.6 µs**；
+- 相比 ROS 2 多进程的 **0.222 ms** 仍然更低，但和 ROS 2 intra-process 的 **24 µs** 相比不占优势；
+- 这是因为这里仍然是**跨进程**路径，而不是单进程内的零 IPC 快路径。
+
+LibXR 整体 CPU（父进程 + subscriber 子进程，整次运行聚合）：
+
+- `libxr_linux_shared_topic CPU(total)`: samples=10，avg = **1.80 %**
 
 ---
 
@@ -298,23 +290,14 @@ WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
    - CPU：320×240 时约 0.31%，1440×1080 时约 1.38%。
    - 避免了 IPC 和额外调度开销，是 ROS 2 框架下的低延迟方案。
 
-3. **LibXR 回调路径（Publish → Callback Entry）**
-   - 延迟：亚微秒级（0.4–0.5 µs），明显低于 ROS intra-process。
-   - 本身几乎不受分辨率影响，主要由 LibXR 内部路径决定。
-
-4. **LibXR 回调内整帧拷贝**
-   - 当前基准中，每帧在回调内发生 **三次完整拷贝**：
-     - 1 次业务缓冲拷贝；
-     - 1 次 `std::memcpy` 计时；
-     - 1 次 `FastCopy` 计时。
-   - 因此 CPU 占用约 2%，是刻意构造的“重拷贝压力”场景，不代表实际应用的最优写法。
-
-5. **LibXR 同步订阅路径（Publish → Wait OK）**
-   - 大图像下约 1.06 ms，小图像约 0.10 ms。
-   - 受用户层同步实现和线程调度影响，是“跨线程 + 同步”场景的端到端数字。
+3. **LibXR LinuxSharedTopic（跨进程共享内存）**
+   - 延迟：1440×1080 约 **89 µs**，320×240 约 **74 µs**。
+   - 相比 ROS 2 多进程显著更低，但不像 ROS 2 intra-process 那样处在同一进程内。
+   - CPU：父进程 + subscriber 子进程总占用约 **1.80 %**。
+   - 这里测到的是 **Publish -> 订阅进程 Wait 成功** 的端到端数字，且起点在帧填充完成之后。
 
 该仓库可以作为后续实验的基础，例如：
 
-- 评估不同线程模型、同步方式对订阅延迟的影响；
-- 组合成更长的处理流水线，测量端到端行为；
-- 在不同 CPU / 内存拓扑下（多核、NUMA 等）验证拷贝策略。
+- 继续比较 ROS 2 多进程 / intra-process 与共享内存 IPC 的边界条件；
+- 评估更高帧率、更大图像尺寸下的行为；
+- 组合成更长的处理流水线，测量端到端行为。
