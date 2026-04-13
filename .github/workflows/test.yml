@@ -49,11 +49,11 @@ jobs:
           # 拷贝 ROS2 benchmark 包
           cp -r src/image_latency_test "$WS/src/"
 
-          # 拷贝 libxr_tp_test 包
-          cp -r libxr_tp_test "$WS/src/"
+          # 拷贝 libxr_bench 包
+          cp -r src/libxr_bench "$WS/src/"
 
-          # 在 libxr_tp_test 里克隆 LibXR 源码到 libxr 子目录
-          cd "$WS/src/libxr_tp_test"
+          # 在 libxr_bench 里克隆 LibXR 源码到 libxr 子目录
+          cd "$WS/src/libxr_bench"
           git clone --depth 1 https://github.com/Jiu-xiao/libxr.git libxr
 
           # 拷贝自动测试脚本
@@ -63,12 +63,12 @@ jobs:
           chmod +x ./auto_bench_image_latency.sh
           chmod +x ./auto_bench_libxr_image_latency.sh
 
-      - name: Build workspace (image_latency_test + libxr_tp_test)
+      - name: Build workspace (image_latency_test + libxr_bench)
         run: |
           set -e
           source /opt/ros/${ROS_DISTRO}/setup.bash
           cd "$WS"
-          colcon build --packages-select image_latency_test libxr_tp_test
+          colcon build --packages-select image_latency_test libxr_bench
 
       - name: Run ROS benchmark 1440x1080
         run: |

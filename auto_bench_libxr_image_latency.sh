@@ -3,7 +3,7 @@ set -eo pipefail
 
 WS="${WS:-$HOME/ros2_ws}"
 LOG_DIR="$WS/logs"
-BIN_PATH="$WS/build/libxr_tp_test/libxr_tp_test"
+BIN_PATH="$WS/install/libxr_bench/bin/libxr_bench"
 BIN_NAME="$(basename "$BIN_PATH")"
 
 mkdir -p "$LOG_DIR"
@@ -34,8 +34,8 @@ ensure_binary() {
   # shellcheck disable=SC1091
   source /opt/ros/humble/setup.bash
 
-  echo "[INFO] 开始 colcon build libxr_tp_test ..."
-  colcon build --packages-select libxr_tp_test
+  echo "[INFO] 开始 colcon build libxr_bench ..."
+  colcon build --packages-select libxr_bench
 }
 
 cleanup_processes() {

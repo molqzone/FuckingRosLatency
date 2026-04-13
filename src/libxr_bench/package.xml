@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>libxr_bench</name>
+  <version>0.0.1</version>
+  <description>Benchmark ordinary Topic and LinuxSharedTopic image latency.</description>
+
+  <maintainer email="2592509183@qq.com">Jiu-xiao</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>cmake</buildtool_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>

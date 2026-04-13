@@ -18,12 +18,13 @@ auto_bench_image_latency.sh
 auto_bench_libxr_image_latency.sh
 README.md
 README_en.md
-libxr_tp_test/
-  CMakeLists.txt
-  libxr/
-  libxr_tp_test.cpp
 src/
   image_latency_test/
+  libxr_bench/
+    CMakeLists.txt
+    package.xml
+    libxr/
+    main.cpp
 ```
 
 ## ROS 2 Benchmarks
@@ -53,7 +54,7 @@ Optional environment variables:
 
 ## LibXR Benchmarks
 
-`libxr_tp_test/libxr_tp_test.cpp` contains two LibXR paths:
+`src/libxr_bench/main.cpp` contains two LibXR paths:
 
 1. ordinary `Topic`
    one-process callback subscriber, measures `Publish -> Callback`
@@ -70,9 +71,9 @@ export WS=$HOME/ros2_ws
 
 The script:
 
-- builds or reuses `build/libxr_tp_test/libxr_tp_test`
+- builds or reuses `install/libxr_bench/bin/libxr_bench`
 - prints `[RESULT]` lines
-- aggregates total benchmark CPU with `pidstat -C libxr_tp_test`
+- aggregates total benchmark CPU with `pidstat -C libxr_bench`
 
 ## Latest Results
 
@@ -84,7 +85,7 @@ ROS 2 data:
 LibXR data:
 
 - Ubuntu24 rerun
-  `/home/xiao/runs/fuck_ros_cleanup_20260413T232545Z`
+  `/home/xiao/runs/fuck_ros_structure_direct_20260413T234243Z`
 
 ### 1440×1080
 
@@ -92,8 +93,8 @@ LibXR data:
 |---|---|---|
 | ROS 2 multi-process | sub latency | `1.779 ms` |
 | ROS 2 `intra-process` | latency | `0.026 ms` |
-| LibXR `Topic` | `Publish -> Callback` | `0.641 us` |
-| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `93.983 us` |
+| LibXR `Topic` | `Publish -> Callback` | `0.607 us` |
+| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `96.288 us` |
 
 ### 320×240
 
@@ -101,8 +102,8 @@ LibXR data:
 |---|---|---|
 | ROS 2 multi-process | sub latency | `0.222 ms` |
 | ROS 2 `intra-process` | latency | `0.024 ms` |
-| LibXR `Topic` | `Publish -> Callback` | `0.563 us` |
-| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `62.151 us` |
+| LibXR `Topic` | `Publish -> Callback` | `0.551 us` |
+| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `61.550 us` |
 
 ### CPU
 
@@ -112,7 +113,7 @@ LibXR data:
 | ROS 2 `intra-process` 1440×1080 | `1.38 %` |
 | ROS 2 multi-process 320×240 | pub `0.59 %`, sub `0.48 %` |
 | ROS 2 `intra-process` 320×240 | `0.31 %` |
-| LibXR benchmark total CPU | `1.52 %` |
+| LibXR benchmark total CPU | `1.45 %` |
 
 ## Takeaways
 

@@ -18,12 +18,13 @@ auto_bench_image_latency.sh
 auto_bench_libxr_image_latency.sh
 README.md
 README_en.md
-libxr_tp_test/
-  CMakeLists.txt
-  libxr/
-  libxr_tp_test.cpp
 src/
   image_latency_test/
+  libxr_bench/
+    CMakeLists.txt
+    package.xml
+    libxr/
+    main.cpp
 ```
 
 ## ROS 2 基准
@@ -53,7 +54,7 @@ export WS=$HOME/ros2_ws
 
 ## LibXR 基准
 
-`libxr_tp_test/libxr_tp_test.cpp` 同时包含两条 LibXR 基准线：
+`src/libxr_bench/main.cpp` 同时包含两条 LibXR 基准线：
 
 1. 普通 `Topic`
    同进程 callback subscriber，统计 `Publish -> Callback`
@@ -70,9 +71,9 @@ export WS=$HOME/ros2_ws
 
 脚本会：
 
-- 构建或复用 `build/libxr_tp_test/libxr_tp_test`
+- 构建或复用 `install/libxr_bench/bin/libxr_bench`
 - 抽取 `[RESULT]` 行
-- 用 `pidstat -C libxr_tp_test` 聚合整个 LibXR benchmark 运行期 CPU
+- 用 `pidstat -C libxr_bench` 聚合整个 LibXR benchmark 运行期 CPU
 
 ## 最新结果
 
@@ -84,7 +85,7 @@ ROS 2 数据：
 LibXR 数据：
 
 - Ubuntu24 实跑
-  `/home/xiao/runs/fuck_ros_cleanup_20260413T232545Z`
+  `/home/xiao/runs/fuck_ros_structure_direct_20260413T234243Z`
 
 ### 1440×1080
 
@@ -92,8 +93,8 @@ LibXR 数据：
 |---|---|---|
 | ROS 2 多进程 | sub latency | `1.779 ms` |
 | ROS 2 `intra-process` | latency | `0.026 ms` |
-| LibXR `Topic` | `Publish -> Callback` | `0.641 us` |
-| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `93.983 us` |
+| LibXR `Topic` | `Publish -> Callback` | `0.607 us` |
+| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `96.288 us` |
 
 ### 320×240
 
@@ -101,8 +102,8 @@ LibXR 数据：
 |---|---|---|
 | ROS 2 多进程 | sub latency | `0.222 ms` |
 | ROS 2 `intra-process` | latency | `0.024 ms` |
-| LibXR `Topic` | `Publish -> Callback` | `0.563 us` |
-| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `62.151 us` |
+| LibXR `Topic` | `Publish -> Callback` | `0.551 us` |
+| LibXR `LinuxSharedTopic` | `Publish -> Wait OK` | `61.550 us` |
 
 ### CPU
 
@@ -112,7 +113,7 @@ LibXR 数据：
 | ROS 2 `intra-process` 1440×1080 | `1.38 %` |
 | ROS 2 多进程 320×240 | pub `0.59 %`, sub `0.48 %` |
 | ROS 2 `intra-process` 320×240 | `0.31 %` |
-| LibXR benchmark 总 CPU | `1.52 %` |
+| LibXR benchmark 总 CPU | `1.45 %` |
 
 ## 结论
 
