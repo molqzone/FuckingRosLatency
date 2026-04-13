@@ -1,13 +1,13 @@
 # FuckingRosLatency
 
-This repository benchmarks image-message latency and CPU usage for ROS 2 and LibXR.
+This repository compares image-message latency and CPU usage for ROS 2 and LibXR.
 
-The comparison is intentionally split into two matched pairs:
+The comparison is organized into two corresponding pairs:
 
 - ROS 2 `intra-process`
-  vs ordinary LibXR `Topic`
+  corresponding to ordinary LibXR `Topic`
 - ROS 2 multi-process pub/sub
-  vs `LibXR::LinuxSharedTopic`
+  corresponding to `LibXR::LinuxSharedTopic`
 
 All benchmarks timestamp frames after frame fill completes, so the reported numbers exclude frame-fill cost.
 
@@ -69,11 +69,11 @@ export WS=$HOME/ros2_ws
 ./auto_bench_libxr_image_latency.sh
 ```
 
-The script:
+Script behavior:
 
 - builds or reuses `install/libxr_bench/bin/libxr_bench`
 - prints `[RESULT]` lines
-- aggregates total benchmark CPU with `pidstat -C libxr_bench`
+- measures total benchmark CPU usage with `pidstat -C libxr_bench`
 
 ## Latest Results
 
@@ -115,9 +115,9 @@ LibXR data:
 | ROS 2 `intra-process` 320×240 | `0.31 %` |
 | LibXR benchmark total CPU | `1.45 %` |
 
-## Takeaways
+## Conclusions
 
-- For in-process messaging, ordinary `Topic` is the right LibXR peer to ROS 2 `intra-process`
-- For cross-process messaging, `LinuxSharedTopic` is the right LibXR peer to ROS 2 multi-process pub/sub
-- `LinuxSharedTopic` is not intended to compete with ROS 2 `intra-process`
-- The two LibXR paths cover two different deployment classes: in-process and cross-process
+- For in-process messaging, ordinary `Topic` shows lower latency than ROS 2 `intra-process`
+- For cross-process messaging, `LinuxSharedTopic` shows lower latency than ROS 2 multi-process pub/sub
+- `LinuxSharedTopic` is not intended to replace ROS 2 `intra-process`
+- The two LibXR paths correspond to two different deployment classes: in-process and cross-process

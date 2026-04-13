@@ -1,13 +1,13 @@
 # FuckingRosLatency
 
-这个仓库只做一件事：对比 ROS 2 与 LibXR 在图像消息链路上的延迟和 CPU。
+本仓库用于比较 ROS 2 与 LibXR 在图像消息链路上的延迟和 CPU 占用。
 
-当前口径是两组一一对应：
+当前比较关系如下：
 
 - ROS 2 `intra-process`
-  对标 LibXR 普通 `Topic`
+  对应 LibXR 普通 `Topic`
 - ROS 2 多进程 pub/sub
-  对标 `LibXR::LinuxSharedTopic`
+  对应 `LibXR::LinuxSharedTopic`
 
 所有测试都在图像帧填充完成后再打时间戳，所以结果不包含帧填充时间。
 
@@ -69,11 +69,11 @@ export WS=$HOME/ros2_ws
 ./auto_bench_libxr_image_latency.sh
 ```
 
-脚本会：
+脚本功能：
 
 - 构建或复用 `install/libxr_bench/bin/libxr_bench`
 - 抽取 `[RESULT]` 行
-- 用 `pidstat -C libxr_bench` 聚合整个 LibXR benchmark 运行期 CPU
+- 用 `pidstat -C libxr_bench` 统计整个 LibXR benchmark 运行期间的总 CPU 占用
 
 ## 最新结果
 
@@ -89,7 +89,7 @@ LibXR 数据：
 
 ### 1440×1080
 
-| 路径 | 指标 | 结果 |
+| 类别 | 指标 | 结果 |
 |---|---|---|
 | ROS 2 多进程 | sub latency | `1.779 ms` |
 | ROS 2 `intra-process` | latency | `0.026 ms` |
@@ -98,7 +98,7 @@ LibXR 数据：
 
 ### 320×240
 
-| 路径 | 指标 | 结果 |
+| 类别 | 指标 | 结果 |
 |---|---|---|
 | ROS 2 多进程 | sub latency | `0.222 ms` |
 | ROS 2 `intra-process` | latency | `0.024 ms` |
@@ -107,7 +107,7 @@ LibXR 数据：
 
 ### CPU
 
-| 路径 | 结果 |
+| 类别 | 结果 |
 |---|---|
 | ROS 2 多进程 1440×1080 | pub `4.76 %`, sub `3.45 %` |
 | ROS 2 `intra-process` 1440×1080 | `1.38 %` |
@@ -117,7 +117,7 @@ LibXR 数据：
 
 ## 结论
 
-- 进程内对比里，普通 `Topic` 明显快于 ROS 2 `intra-process`
-- 跨进程对比里，`LinuxSharedTopic` 明显快于 ROS 2 多进程链路
-- `LinuxSharedTopic` 的目标不是对标 ROS 2 `intra-process`
-- 普通 `Topic` 和 `LinuxSharedTopic` 分别覆盖进程内、跨进程两类场景
+- 在进程内消息路径下，普通 `Topic` 的延迟低于 ROS 2 `intra-process`
+- 在跨进程消息路径下，`LinuxSharedTopic` 的延迟低于 ROS 2 多进程链路
+- `LinuxSharedTopic` 的设计目标不是替代 ROS 2 `intra-process`
+- 普通 `Topic` 与 `LinuxSharedTopic` 分别对应进程内、跨进程两类场景
