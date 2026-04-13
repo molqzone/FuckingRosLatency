@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# 不用 -u，避免 setup.bash 里未定义变量导致中断
 set -eo pipefail
 
-# ===== 基本配置 =====
 WS="${WS:-$HOME/ros2_ws}"
 LOG_DIR="$WS/logs"
 BIN_PATH="$WS/build/libxr_tp_test/libxr_tp_test"
@@ -13,45 +11,45 @@ mkdir -p "$LOG_DIR"
 echo "Workspace: $WS"
 echo "Log dir  : $LOG_DIR"
 
-# ===== 环境 / 工具检查 =====
-if ! command -v pidstat >/dev/null 2>&1; then
+ensure_pidstat() {
+  if command -v pidstat >/dev/null 2>&1; then
+    return
+  fi
+
   echo "[INFO] pidstat 未找到，自动安装 sysstat..."
   apt-get update -y
   apt-get install -y sysstat
-fi
-
-cd "$WS"
-
-ensure_binaries() {
-  # 如果可执行文件不存在，自动 build 一次
-  if [ ! -x "$BIN_PATH" ]; then
-    if [ -f /opt/ros/humble/setup.bash ]; then
-      # shellcheck disable=SC1091
-      source /opt/ros/humble/setup.bash
-    else
-      echo "[ERROR] 找不到 /opt/ros/humble/setup.bash，且当前缺少可执行文件 $BIN_PATH。"
-      exit 1
-    fi
-
-    echo "[INFO] 找不到可执行文件 $BIN_PATH，开始 colcon build libxr_tp_test ..."
-    colcon build --packages-select libxr_tp_test
-    echo "[INFO] build 完成。"
-  fi
 }
 
-kill_all_test_procs() {
-  echo "[INFO] 杀掉残留 libxr 测试进程和 pidstat..."
+ensure_binary() {
+  if [ -x "$BIN_PATH" ]; then
+    return
+  fi
+
+  if [ ! -f /opt/ros/humble/setup.bash ]; then
+    echo "[ERROR] 缺少可执行文件 $BIN_PATH，且找不到 /opt/ros/humble/setup.bash。"
+    exit 1
+  fi
+
+  # shellcheck disable=SC1091
+  source /opt/ros/humble/setup.bash
+
+  echo "[INFO] 开始 colcon build libxr_tp_test ..."
+  colcon build --packages-select libxr_tp_test
+}
+
+cleanup_processes() {
   pkill -x "$BIN_NAME" || true
   pkill -f "pidstat -u" || true
 }
 
-analyze_cpu() {
+print_total_cpu() {
   local file="$1"
   local label="$2"
   local cmd_name="$3"
 
   if [ ! -f "$file" ]; then
-    echo "[WARN] $label CPU: 日志文件不存在: $file"
+    echo "[RESULT] $label CPU(total): no data"
     return
   fi
 
@@ -73,63 +71,57 @@ analyze_cpu() {
         n++
       }
       if (n > 0) {
-        printf("[RESULT] %s CPU(total): samples=%d avg=%.2f%%\n", label, n, sum/n)
+        printf("[RESULT] %s CPU(total): samples=%d avg=%.2f%%\n", label, n, sum / n)
       } else {
-        printf("[RESULT] %s CPU(total): no data (file=%s)\n", label, FILENAME)
+        printf("[RESULT] %s CPU(total): no data\n", label)
       }
     }
   ' "$file"
 }
 
-run_libxr_test() {
-  echo
-  echo "====== LibXR image latency 测试开始（普通 Topic + LinuxSharedTopic，程序内部会依次测 1440x1080 / 320x240） ======"
+main() {
+  ensure_pidstat
+  ensure_binary
 
-  kill_all_test_procs
-  ensure_binaries
+  cd "$WS"
+  cleanup_processes
 
   local ts
   ts=$(date +%F_%H%M%S)
 
-  local LIBXR_LOG="$LOG_DIR/libxr_${ts}.log"
-  local CPU_LIBXR_LOG="$LOG_DIR/cpu_libxr_${ts}.log"
+  local bench_log="$LOG_DIR/libxr_${ts}.log"
+  local cpu_log="$LOG_DIR/cpu_libxr_${ts}.log"
 
-  echo "[INFO] libxr log: $LIBXR_LOG"
+  echo "[INFO] libxr log: $bench_log"
 
-  # 启动 LibXR 基准测试
-  "$BIN_PATH" >"$LIBXR_LOG" 2>&1 &
-  local PID_LIBXR=$!
-  echo "[INFO] ${BIN_NAME} PID=${PID_LIBXR}"
+  "$BIN_PATH" >"$bench_log" 2>&1 &
+  local bench_pid=$!
+  echo "[INFO] ${BIN_NAME} PID=${bench_pid}"
 
   sleep 1
 
-  # 用命令名聚合父子进程，避免共享 topic 的 subscriber 子进程被漏记。
-  pidstat -u -h -C "$BIN_NAME" 1 >"$CPU_LIBXR_LOG" &
-  local PID_PIDSTAT_LIBXR=$!
+  pidstat -u -h -C "$BIN_NAME" 1 >"$cpu_log" &
+  local pidstat_pid=$!
 
-  # 等待 libxr 测试结束
-  wait "$PID_LIBXR" || true
-
-  # 停掉 pidstat
-  kill "$PID_PIDSTAT_LIBXR" 2>/dev/null || true
+  wait "$bench_pid" || true
+  kill "$pidstat_pid" 2>/dev/null || true
 
   echo
-  echo "------ LibXR image latency 测试结果（从日志中抽取）------"
-  # 把 [RESULT] 行抽出来再打印一遍，方便 CI 控制台查看
-  if grep -q "\[RESULT\]" "$LIBXR_LOG"; then
-    grep "\[RESULT\]" "$LIBXR_LOG"
+  echo "------ LibXR Benchmark Results ------"
+  if grep -q "\[RESULT\]" "$bench_log"; then
+    grep "\[RESULT\]" "$bench_log"
   else
-    echo "[WARN] 没在 $LIBXR_LOG 里找到 [RESULT] 行，请检查程序输出。"
+    echo "[RESULT] libxr_bench: no result lines"
   fi
 
   echo
-  echo "------ LibXR CPU 统计 ------"
-  analyze_cpu "$CPU_LIBXR_LOG" "libxr_bench" "$BIN_NAME"
+  echo "------ LibXR CPU ------"
+  print_total_cpu "$cpu_log" "libxr_bench" "$BIN_NAME"
+
+  echo
+  echo "Logs:"
+  echo "  $bench_log"
+  echo "  $cpu_log"
 }
 
-# ===== 主流程 =====
-
-run_libxr_test
-
-echo
-echo "====== LibXR 测试完成，详细日志在 $LOG_DIR 下 ======"
+main
