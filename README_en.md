@@ -146,37 +146,35 @@ Script `auto_bench_image_latency.sh`:
 
 ### LibXR
 
-Program `libxr_tp_test.cpp` (single executable) directly benchmarks the cross-process path of `LibXR::LinuxSharedTopic<Frame>` for two resolutions in sequence:
+Program `libxr_tp_test.cpp` (single executable) now contains two LibXR benchmark lines and runs both for two resolutions (1440×1080 / 320×240):
 
-- For each frame type (1440×1080 / 320×240), it creates one shared topic;
-- the parent process acts as publisher, and a forked child process acts as synchronous subscriber;
-- the publisher sends `NUM_FRAMES = 300` frames at 30 Hz, and for each frame:
-  1. calls `CreateData()` to allocate one shared payload slot;
-  2. fills RGB888 image data for the target resolution;
-  3. writes `pub_ns = now()` **after the fill is complete**;
-  4. calls `Publish()`.
+1. **Ordinary `Topic` in-process path**
+   - creates an ordinary `Topic<Frame>`;
+   - registers a callback subscriber in the same process;
+   - publishes frames after writing `pub_ns = now()`;
+   - measures **Publish -> Callback** latency.
 
-Therefore, the measured **Publish -> Wait OK** latency **excludes the frame-fill cost**.
+2. **`LinuxSharedTopic` cross-process path**
+   - creates a shared-memory topic;
+   - the parent process acts as publisher and a forked child acts as synchronous subscriber;
+   - publishes frames after writing `pub_ns = now()`;
+   - measures **Publish -> Wait OK** latency in the subscriber process.
 
-In the subscriber child process:
-
-- it loops on `subscriber.Wait(data)`;
-- validates the frame sequence, resolution, and first/last payload bytes;
-- computes one-way latency as `now() - pub_ns`.
+Both LibXR benchmark lines timestamp the frame **after fill completes**, so the reported latencies **exclude frame-fill cost**.
 
 Script `auto_bench_libxr_image_latency.sh`:
 
-- uses `pidstat -C libxr_tp_test` to capture all same-name parent/child processes;
-- aggregates `%CPU` by time slice so the reported CPU is the total cost of the whole shared-topic pipeline;
+- uses `pidstat -C libxr_tp_test` to capture the benchmark process set;
+- aggregates `%CPU` by time slice so the reported CPU is the total cost of the whole LibXR benchmark run;
 - extracts `[RESULT]` lines from the benchmark logs and summarizes latency and CPU usage.
 
 ---
 
 ## Test Configuration
 
-ROS 2 results come from the [latest GitHub Actions run](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824). LibXR LinuxSharedTopic results come from the latest Ubuntu24 rerun:
+ROS 2 results come from the [latest GitHub Actions run](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824). The latest dual LibXR benchmark results come from Ubuntu24:
 
-- `/home/xiao/runs/fuck_ros_shared_topic_20260413T223805Z`
+- `/home/xiao/runs/fuck_ros_dual_bench_20260413T230047Z`
 
 Unified configuration:
 
@@ -220,14 +218,17 @@ Units: latency in microseconds (µs), CPU in percent.
 
 | Metric                                          | Value |
 | ----------------------------------------------- | ----- |
-| LinuxSharedTopic latency (Publish → Wait OK)    | count=300, avg = **89.090 µs** (min=21.675, max=127.630) |
+| Topic latency (Publish → Callback)              | count=300, avg = **0.619 µs** (min=0.201, max=2.409) |
+| LinuxSharedTopic latency (Publish → Wait OK)    | count=300, avg = **93.536 µs** (min=18.556, max=135.709) |
 
 Key points:
 
-- For 1440×1080 frames, cross-process `LinuxSharedTopic` delivery is about **89 µs**.
-- This is much lower than ROS 2 multi-process (**1.779 ms**).
-- The direct peer here is ROS 2 **multi-process**, because both paths keep process isolation.
-- ROS 2 `intra-process` numbers remain in the table as a reference baseline, but that category maps to ordinary in-process `Topic`-style messaging rather than to this shared-topic benchmark.
+- For 1440×1080 frames:
+  - ordinary `Topic` in-process callback latency is about **0.62 µs**;
+  - cross-process `LinuxSharedTopic` latency is about **93.5 µs**.
+- The pairing should be read as:
+  - ordinary `Topic` vs ROS `intra-process`;
+  - `LinuxSharedTopic` vs ROS multi-process.
 
 ---
 
@@ -252,17 +253,21 @@ Compared to 1440×1080:
 
 | Metric                                          | Value |
 | ----------------------------------------------- | ----- |
-| LinuxSharedTopic latency (Publish → Wait OK)    | count=300, avg = **73.584 µs** (min=18.503, max=117.085) |
+| Topic latency (Publish → Callback)              | count=300, avg = **0.637 µs** (min=0.291, max=1.184) |
+| LinuxSharedTopic latency (Publish → Wait OK)    | count=300, avg = **72.121 µs** (min=13.066, max=227.219) |
 
 We can see:
 
-- After reducing the resolution to 320×240, `LinuxSharedTopic` latency drops to **73.6 µs**.
-- It remains lower than ROS 2 multi-process (**0.222 ms**).
-- This is still a cross-process path, so it is not presented here as a same-category comparison against ROS 2 `intra-process`.
+- After reducing the resolution to 320×240:
+  - ordinary `Topic` in-process callback latency is about **0.64 µs**;
+  - `LinuxSharedTopic` latency is about **72.1 µs**.
+- The same pairing still applies:
+  - ordinary `Topic` for in-process comparison;
+  - `LinuxSharedTopic` for cross-process comparison.
 
-Combined LibXR CPU across the whole run (publisher parent + subscriber child):
+Combined LibXR CPU across the whole benchmark run:
 
-- `libxr_linux_shared_topic CPU(total)`: samples=10, avg = **1.80 %**
+- `libxr_bench CPU(total)`: samples=21, avg = **1.48 %**
 
 ---
 
@@ -279,17 +284,21 @@ By communication mode, we can roughly summarize:
    - Latency: ~0.02–0.03 ms at both resolutions.
    - CPU: ~0.31% for 320×240; ~1.38% for 1440×1080.
    - Eliminates IPC and extra scheduling overhead; this is the in-process low-latency option within the ROS 2 framework.
-   - This category is a better peer for ordinary in-process `Topic`-style messaging, not for `LinuxSharedTopic`.
+   - This category is the direct peer for ordinary in-process `Topic`-style messaging.
 
-3. **LibXR LinuxSharedTopic (cross-process shared memory)**
-   - Latency: about **89 µs** at 1440×1080 and **74 µs** at 320×240.
-   - Its direct peer is ROS 2 multi-process, not ROS 2 intra-process.
+3. **LibXR ordinary `Topic` (in-process)**
+   - Latency: about **0.6 µs** at both resolutions.
+   - Its direct peer is ROS 2 `intra-process`.
+   - The reported number is **Publish -> Callback**, with the start timestamp taken after frame fill completes.
+
+4. **LibXR `LinuxSharedTopic` (cross-process shared memory)**
+   - Latency: about **94 µs** at 1440×1080 and **72 µs** at 320×240.
+   - Its direct peer is ROS 2 multi-process.
    - It is clearly lower than ROS 2 multi-process while still preserving process isolation.
-   - CPU: about **1.80 %** total for publisher + subscriber across the whole benchmark run.
-   - The reported number is **Publish -> subscriber-process Wait OK**, with the start timestamp taken after frame fill completes.
+   - The reported number is **Publish -> subscriber-process Wait OK**, again with the start timestamp taken after frame fill completes.
 
 This repository can serve as a base for further experiments, for example:
 
-- Comparing ROS 2 multi-process / intra-process against shared-memory IPC under more boundary conditions;
+- Comparing ROS 2 multi-process / intra-process against both LibXR benchmark lines under more boundary conditions;
 - Evaluating higher frame rates and larger image sizes;
 - Building longer processing pipelines and measuring end-to-end behavior.

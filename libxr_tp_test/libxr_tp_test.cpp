@@ -1,5 +1,6 @@
 #include "libxr.hpp"
 
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -120,7 +121,7 @@ bool WaitForSubscriberAttach(TopicType& topic)
 }
 
 template <uint32_t W, uint32_t H>
-struct SharedImageFrameT
+struct BenchImageFrameT
 {
   static constexpr uint32_t WIDTH = W;
   static constexpr uint32_t HEIGHT = H;
@@ -132,8 +133,8 @@ struct SharedImageFrameT
   uint8_t data[W * H * 3];
 };
 
-using SharedImageFrame1440 = SharedImageFrameT<1440, 1080>;
-using SharedImageFrame320 = SharedImageFrameT<320, 240>;
+using BenchImageFrame1440 = BenchImageFrameT<1440, 1080>;
+using BenchImageFrame320 = BenchImageFrameT<320, 240>;
 
 template <typename Frame>
 void FillFrame(Frame* frame, uint32_t seq)
@@ -161,6 +162,66 @@ bool ValidateFrame(const Frame* frame, uint32_t expected_seq)
   const uint8_t expected_byte = static_cast<uint8_t>(expected_seq & 0xFFU);
   return frame->data[0] == expected_byte &&
          frame->data[(sizeof(frame->data) / sizeof(frame->data[0])) - 1U] == expected_byte;
+}
+
+template <typename Frame>
+void RunTopicCase(const char* label, const char* topic_name, const char* domain_name)
+{
+  struct CallbackContext
+  {
+    LatencyStats stats = {};
+    std::atomic<uint32_t> received_count{0};
+    uint32_t status = 0;
+  };
+
+  CallbackContext ctx = {};
+  LibXR::Topic::Domain domain(domain_name);
+  auto topic =
+      LibXR::Topic::CreateTopic<Frame>(topic_name, &domain, false, false, false);
+
+  auto callback = LibXR::Topic::Callback::Create(
+      [](bool, CallbackContext* cb_ctx, LibXR::RawData& raw)
+      {
+        const auto* frame = reinterpret_cast<const Frame*>(raw.addr_);
+        const uint32_t received = cb_ctx->received_count.load(std::memory_order_acquire);
+        if (!ValidateFrame(frame, received))
+        {
+          cb_ctx->status = 1;
+          return;
+        }
+
+        cb_ctx->stats.Add(static_cast<double>(NowNs() - frame->pub_ns) / 1000.0);
+        cb_ctx->received_count.fetch_add(1, std::memory_order_release);
+      },
+      &ctx);
+  topic.RegisterCallback(callback);
+
+  const auto period = std::chrono::duration<double>(1.0 / PUBLISH_RATE_HZ);
+  Frame frame = {};
+  for (uint32_t seq = 0; seq < NUM_FRAMES; ++seq)
+  {
+    FillFrame(&frame, seq);
+    topic.Publish(frame);
+    std::this_thread::sleep_for(period);
+  }
+
+  for (int retry = 0; retry < 500 &&
+                      ctx.received_count.load(std::memory_order_acquire) < NUM_FRAMES &&
+                      ctx.status == 0;
+       ++retry)
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  if (ctx.status != 0 ||
+      ctx.received_count.load(std::memory_order_acquire) != NUM_FRAMES)
+  {
+    std::printf("[RESULT] %s: callback failed count=%u status=%u\n", label,
+                ctx.received_count.load(std::memory_order_acquire), ctx.status);
+    return;
+  }
+
+  ctx.stats.Log(label);
 }
 
 template <typename Frame>
@@ -301,9 +362,13 @@ int main()
 {
   LibXR::PlatformInit();
 
-  RunSharedTopicCase<SharedImageFrame1440>(
+  RunTopicCase<BenchImageFrame1440>("Topic latency (Publish -> Callback) 1440x1080",
+                                    "bench/topic_1440", "bench_topic_domain");
+  RunSharedTopicCase<BenchImageFrame1440>(
       "LinuxSharedTopic latency (Publish -> Wait OK) 1440x1080", "bench/linux_shared_1440");
-  RunSharedTopicCase<SharedImageFrame320>(
+  RunTopicCase<BenchImageFrame320>("Topic latency (Publish -> Callback) 320x240",
+                                   "bench/topic_320", "bench_topic_domain");
+  RunSharedTopicCase<BenchImageFrame320>(
       "LinuxSharedTopic latency (Publish -> Wait OK) 320x240", "bench/linux_shared_320");
   return 0;
 }

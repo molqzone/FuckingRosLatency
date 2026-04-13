@@ -83,7 +83,7 @@ analyze_cpu() {
 
 run_libxr_test() {
   echo
-  echo "====== LibXR LinuxSharedTopic image latency 测试开始（程序内部会依次测 1440x1080 / 320x240） ======"
+  echo "====== LibXR image latency 测试开始（普通 Topic + LinuxSharedTopic，程序内部会依次测 1440x1080 / 320x240） ======"
 
   kill_all_test_procs
   ensure_binaries
@@ -96,7 +96,7 @@ run_libxr_test() {
 
   echo "[INFO] libxr log: $LIBXR_LOG"
 
-  # 启动 LibXR LinuxSharedTopic 基准测试
+  # 启动 LibXR 基准测试
   "$BIN_PATH" >"$LIBXR_LOG" 2>&1 &
   local PID_LIBXR=$!
   echo "[INFO] ${BIN_NAME} PID=${PID_LIBXR}"
@@ -124,7 +124,7 @@ run_libxr_test() {
 
   echo
   echo "------ LibXR CPU 统计 ------"
-  analyze_cpu "$CPU_LIBXR_LOG" "libxr_linux_shared_topic" "$BIN_NAME"
+  analyze_cpu "$CPU_LIBXR_LOG" "libxr_bench" "$BIN_NAME"
 }
 
 # ===== 主流程 =====

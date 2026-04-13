@@ -157,37 +157,35 @@ WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
 
 ### LibXR
 
-程序 `libxr_tp_test.cpp`（单一可执行）直接测试 `LibXR::LinuxSharedTopic<Frame>` 的跨进程路径，对两个分辨率依次执行：
+程序 `libxr_tp_test.cpp`（单一可执行）现在包含两条 LibXR 基准线，并对两个分辨率（1440×1080 / 320×240）依次执行：
 
-- 对每种帧类型（1440×1080 / 320×240）创建一个共享 topic；
-- 父进程作为 publisher，子进程作为 synchronous subscriber；
-- 主进程以 30 Hz 发送 `NUM_FRAMES = 300` 帧，每帧流程为：
-  1. 调用 `CreateData()` 申请共享 payload；
-  2. 填充对应分辨率的 RGB888 数据；
-  3. **完成帧填充后** 写入 `pub_ns = now()`；
-  4. 调用 `Publish()`。
+1. **普通 `Topic` 进程内路径**
+   - 创建普通 `Topic<Frame>`；
+   - 在同一进程内注册 callback subscriber；
+   - 主线程填充图像帧后写入 `pub_ns = now()`，再调用 `Publish()`；
+   - callback 中读取 `now() - pub_ns`，统计 **Publish -> Callback** 延迟。
 
-因此，统计的 **Publish -> Wait OK** 延迟同样**不包含帧填充时间**。
+2. **`LinuxSharedTopic` 跨进程路径**
+   - 创建共享内存 topic；
+   - 父进程作为 publisher，子进程作为 synchronous subscriber；
+   - 主线程填充图像帧后写入 `pub_ns = now()`，再调用 `Publish()`；
+   - 子进程中循环调用 `subscriber.Wait(data)`，统计 **Publish -> Wait OK** 延迟。
 
-子进程中：
-
-- 循环调用 `subscriber.Wait(data)`；
-- 校验帧号、分辨率和首尾像素；
-- 用 `now() - pub_ns` 计算 **发布 → 订阅进程 Wait 成功** 的一程延迟。
+两条 LibXR 基准线的起点都在**帧填充完成之后**，因此统计值都**不包含帧填充时间**。
 
 脚本 `auto_bench_libxr_image_latency.sh`：
 
-- 启动基准程序的同时，用 `pidstat -C libxr_tp_test` 统计同名父/子进程；
-- 以时间片为单位聚合父、子两边的 `%CPU`，给出整个共享 topic 链路的总 CPU 占用；
+- 启动基准程序的同时，用 `pidstat -C libxr_tp_test` 统计同名进程；
+- 以时间片为单位聚合整个 LibXR benchmark 运行期的 `%CPU`；
 - 从程序日志中抽取 `[RESULT]` 行，并汇总延迟和 CPU。
 
 ---
 
 ## 测试配置
 
-ROS 2 结果来自 GitHub Actions 上[最近一次运行](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824)；LibXR LinuxSharedTopic 结果来自 Ubuntu24 主机 `MD-063744` 上的最新实跑：
+ROS 2 结果来自 GitHub Actions 上[最近一次运行](https://github.com/Jiu-xiao/FuckingRosLatency/actions/runs/19598484409/job/56126494824)；LibXR 双基准结果来自 Ubuntu24 主机 `MD-063744` 上的最新实跑：
 
-- `/home/xiao/runs/fuck_ros_shared_topic_20260413T223805Z`
+- `/home/xiao/runs/fuck_ros_dual_bench_20260413T230047Z`
 
 统一配置如下：
 
@@ -231,14 +229,17 @@ ROS 2 结果来自 GitHub Actions 上[最近一次运行](https://github.com/Jiu
 
 | 指标                                            | 数值 |
 |-------------------------------------------------|------|
-| LinuxSharedTopic latency (Publish -> Wait OK)   | count=300，avg = **89.090 µs** (min=21.675, max=127.630) |
+| Topic latency (Publish -> Callback)             | count=300，avg = **0.619 µs** (min=0.201, max=2.409) |
+| LinuxSharedTopic latency (Publish -> Wait OK)   | count=300，avg = **93.536 µs** (min=18.556, max=135.709) |
 
 关键点：
 
-- 对 1440×1080 大图像，`LinuxSharedTopic` 的跨进程同步接收延迟约 **89 µs**。
-- 这个数字明显低于 ROS 2 多进程的 **1.779 ms**；
-- 这里的直接对标对象就是 ROS 2 **多进程**链路，因为两者都保留进程隔离。
-- ROS 2 `intra-process` 结果仍然保留在表里，但它对应的是普通 `Topic` 这类进程内通信路径，不是当前共享 topic 基准的直接目标。
+- 对 1440×1080 大图像：
+  - 普通 `Topic` 的进程内 callback 延迟约 **0.62 µs**；
+  - `LinuxSharedTopic` 的跨进程同步接收延迟约 **93.5 µs**。
+- 对标关系应当拆开看：
+  - 普通 `Topic` 对标 ROS `intra-process`；
+  - `LinuxSharedTopic` 对标 ROS 多进程链路。
 
 ---
 
@@ -263,17 +264,21 @@ ROS 2 结果来自 GitHub Actions 上[最近一次运行](https://github.com/Jiu
 
 | 指标                                            | 数值 |
 |-------------------------------------------------|------|
-| LinuxSharedTopic latency (Publish -> Wait OK)   | count=300，avg = **73.584 µs** (min=18.503, max=117.085) |
+| Topic latency (Publish -> Callback)             | count=300，avg = **0.637 µs** (min=0.291, max=1.184) |
+| LinuxSharedTopic latency (Publish -> Wait OK)   | count=300，avg = **72.121 µs** (min=13.066, max=227.219) |
 
 可以看到：
 
-- 分辨率降到 320×240 后，`LinuxSharedTopic` 的跨进程延迟降到 **73.6 µs**；
-- 相比 ROS 2 多进程的 **0.222 ms** 仍然更低；
-- 这里仍然是**跨进程**路径，因此不把它和 ROS 2 `intra-process` 作为同一类直接比较。
+- 分辨率降到 320×240 后：
+  - 普通 `Topic` 的进程内 callback 延迟约 **0.64 µs**；
+  - `LinuxSharedTopic` 的跨进程延迟约 **72.1 µs**。
+- 这依然保持了同样的对应关系：
+  - 普通 `Topic` 看进程内；
+  - `LinuxSharedTopic` 看跨进程。
 
-LibXR 整体 CPU（父进程 + subscriber 子进程，整次运行聚合）：
+LibXR 整体 CPU（整个 benchmark 运行期聚合）：
 
-- `libxr_linux_shared_topic CPU(total)`: samples=10，avg = **1.80 %**
+- `libxr_bench CPU(total)`: samples=21，avg = **1.48 %**
 
 ---
 
@@ -290,17 +295,21 @@ LibXR 整体 CPU（父进程 + subscriber 子进程，整次运行聚合）：
    - 延迟：两种分辨率都在 ~0.02–0.03 ms。
    - CPU：320×240 时约 0.31%，1440×1080 时约 1.38%。
    - 避免了 IPC 和额外调度开销，是 ROS 2 框架下的进程内低延迟方案。
-   - 这一类更适合与普通 `Topic` 这类进程内消息路径对标。
+   - 这一类与普通 `Topic` 这类进程内消息路径对标。
 
-3. **LibXR LinuxSharedTopic（跨进程共享内存）**
-   - 延迟：1440×1080 约 **89 µs**，320×240 约 **74 µs**。
-   - 它的直接对标对象是 ROS 2 多进程，而不是 ROS 2 intra-process。
+3. **LibXR 普通 `Topic`（进程内）**
+   - 延迟：两种分辨率都在 **0.6 µs** 左右。
+   - 它的直接对标对象是 ROS 2 `intra-process`。
+   - 当前测到的是 **Publish -> Callback** 延迟，起点在帧填充完成之后。
+
+4. **LibXR `LinuxSharedTopic`（跨进程共享内存）**
+   - 延迟：1440×1080 约 **94 µs**，320×240 约 **72 µs**。
+   - 它的直接对标对象是 ROS 2 多进程。
    - 相比 ROS 2 多进程显著更低，同时仍保留进程隔离。
-   - CPU：父进程 + subscriber 子进程总占用约 **1.80 %**。
-   - 这里测到的是 **Publish -> 订阅进程 Wait 成功** 的端到端数字，且起点在帧填充完成之后。
+   - 当前测到的是 **Publish -> 订阅进程 Wait 成功** 的端到端数字，起点同样在帧填充完成之后。
 
 该仓库可以作为后续实验的基础，例如：
 
-- 继续比较 ROS 2 多进程 / intra-process 与共享内存 IPC 的边界条件；
+- 继续比较 ROS 2 多进程 / intra-process 与两条 LibXR 路径的边界条件；
 - 评估更高帧率、更大图像尺寸下的行为；
 - 组合成更长的处理流水线，测量端到端行为。
