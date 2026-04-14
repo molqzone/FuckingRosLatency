@@ -9,7 +9,7 @@
 - ROS 2 多进程 pub/sub
   对应 `LibXR::LinuxSharedTopic`
 
-所有测试都在图像帧填充完成后再打时间戳，所以结果不包含帧填充时间。
+默认构建模式为 `Release`。所有测试都在图像帧填充完成后再打时间戳，所以结果不包含帧填充时间。
 
 ## 目录
 
@@ -71,9 +71,10 @@ export WS=$HOME/ros2_ws
 
 脚本功能：
 
-- 构建或复用 `install/libxr_bench/bin/libxr_bench`
+- 以 `Release` 模式构建或复用 `install/libxr_bench/bin/libxr_bench`
 - 抽取 `[RESULT]` 行
 - 用 `pidstat -C libxr_bench` 统计整个 LibXR benchmark 运行期间的总 CPU 占用
+- 导出原始样本并生成对应 SVG 箱线图
 
 ## 最新结果
 
@@ -114,6 +115,17 @@ LibXR 数据：
 | ROS 2 多进程 320×240 | pub `0.59 %`, sub `0.48 %` |
 | ROS 2 `intra-process` 320×240 | `0.31 %` |
 | LibXR benchmark 总 CPU | `1.45 %` |
+
+## 图形输出
+
+两个脚本都会在 `logs/` 下额外输出：
+
+- 原始样本文件
+- 对应的 SVG 箱线图
+
+LibXR 最近一次 `Release` 箱线图产物目录：
+
+- `/home/xiao/runs/fuck_ros_release_boxplot_20260414T014417Z/ws/logs/libxr_boxplots_2026-04-14_024551`
 
 ## 结论
 

@@ -9,7 +9,7 @@ The comparison is organized into two corresponding pairs:
 - ROS 2 multi-process pub/sub
   corresponding to `LibXR::LinuxSharedTopic`
 
-All benchmarks timestamp frames after frame fill completes, so the reported numbers exclude frame-fill cost.
+The default build mode is `Release`. All benchmarks timestamp frames after frame fill completes, so the reported numbers exclude frame-fill cost.
 
 ## Layout
 
@@ -71,9 +71,10 @@ export WS=$HOME/ros2_ws
 
 Script behavior:
 
-- builds or reuses `install/libxr_bench/bin/libxr_bench`
+- builds or reuses `install/libxr_bench/bin/libxr_bench` in `Release`
 - prints `[RESULT]` lines
 - measures total benchmark CPU usage with `pidstat -C libxr_bench`
+- exports raw samples and generates SVG boxplots
 
 ## Latest Results
 
@@ -114,6 +115,17 @@ LibXR data:
 | ROS 2 multi-process 320×240 | pub `0.59 %`, sub `0.48 %` |
 | ROS 2 `intra-process` 320×240 | `0.31 %` |
 | LibXR benchmark total CPU | `1.45 %` |
+
+## Plot Output
+
+Both scripts also write the following under `logs/`:
+
+- raw sample files
+- corresponding SVG boxplots
+
+Latest LibXR `Release` boxplot directory:
+
+- `/home/xiao/runs/fuck_ros_release_boxplot_20260414T014417Z/ws/logs/libxr_boxplots_2026-04-14_024551`
 
 ## Conclusions
 

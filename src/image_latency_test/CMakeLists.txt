@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.8)
 project(image_latency_test)
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 add_compile_options(-g -O3)
 
 if(NOT CMAKE_CXX_STANDARD)

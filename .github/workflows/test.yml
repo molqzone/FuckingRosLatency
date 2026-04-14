@@ -60,15 +60,18 @@ jobs:
           cd "$WS"
           cp "${GITHUB_WORKSPACE}/auto_bench_image_latency.sh" .
           cp "${GITHUB_WORKSPACE}/auto_bench_libxr_image_latency.sh" .
+          mkdir -p "$WS/tools"
+          cp "${GITHUB_WORKSPACE}/tools/boxplot_svg.py" "$WS/tools/"
           chmod +x ./auto_bench_image_latency.sh
           chmod +x ./auto_bench_libxr_image_latency.sh
+          chmod +x "$WS/tools/boxplot_svg.py"
 
       - name: Build workspace (image_latency_test + libxr_bench)
         run: |
           set -e
           source /opt/ros/${ROS_DISTRO}/setup.bash
           cd "$WS"
-          colcon build --packages-select image_latency_test libxr_bench
+          colcon build --packages-select image_latency_test libxr_bench --cmake-args -DCMAKE_BUILD_TYPE=Release
 
       - name: Run ROS benchmark 1440x1080
         run: |

@@ -1,5 +1,6 @@
 #include "libxr.hpp"
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <string>
 #include <thread>
 
 #include <signal.h>
@@ -54,9 +56,24 @@ struct LatencyStats
   }
 };
 
+struct SampleBuffer
+{
+  std::array<double, kNumFrames> values = {};
+  uint32_t count = 0;
+
+  void Add(double value)
+  {
+    if (count < values.size())
+    {
+      values[count++] = value;
+    }
+  }
+};
+
 struct ChildResult
 {
   LatencyStats stats = {};
+  SampleBuffer samples = {};
   uint32_t status = 0;
 };
 
@@ -84,6 +101,8 @@ struct BenchCase
   const char* topic_name;
   const char* domain_name;
   const char* shared_topic_name;
+  const char* topic_sample_key;
+  const char* shared_topic_sample_key;
 };
 
 template <typename Frame>
@@ -91,20 +110,25 @@ constexpr BenchCase<Frame> MakeBenchCase(const char* topic_label,
                                          const char* shared_topic_label,
                                          const char* topic_name,
                                          const char* domain_name,
-                                         const char* shared_topic_name)
+                                         const char* shared_topic_name,
+                                         const char* topic_sample_key,
+                                         const char* shared_topic_sample_key)
 {
-  return {topic_label, shared_topic_label, topic_name, domain_name, shared_topic_name};
+  return {topic_label,          shared_topic_label, topic_name, domain_name,
+          shared_topic_name,    topic_sample_key,   shared_topic_sample_key};
 }
 
 constexpr BenchCase<BenchImageFrame1440> kBenchCase1440 = MakeBenchCase<BenchImageFrame1440>(
     "Topic latency (Publish -> Callback) 1440x1080",
     "LinuxSharedTopic latency (Publish -> Wait OK) 1440x1080", "bench/topic_1440",
-    "bench_topic_domain_1440", "bench/linux_shared_1440");
+    "bench_topic_domain_1440", "bench/linux_shared_1440", "topic_1440x1080",
+    "linux_shared_topic_1440x1080");
 
 constexpr BenchCase<BenchImageFrame320> kBenchCase320 = MakeBenchCase<BenchImageFrame320>(
     "Topic latency (Publish -> Callback) 320x240",
     "LinuxSharedTopic latency (Publish -> Wait OK) 320x240", "bench/topic_320",
-    "bench_topic_domain_320", "bench/linux_shared_320");
+    "bench_topic_domain_320", "bench/linux_shared_320", "topic_320x240",
+    "linux_shared_topic_320x240");
 
 uint64_t NowNs()
 {
@@ -158,7 +182,8 @@ bool ReadAll(int fd, void* buffer, size_t size)
 template <typename TopicType>
 bool WaitForSubscriberAttach(TopicType& topic)
 {
-  for (uint32_t retry = 0; retry < kSubscriberAttachRetry && topic.GetSubscriberNum() == 0; ++retry)
+  for (uint32_t retry = 0; retry < kSubscriberAttachRetry && topic.GetSubscriberNum() == 0;
+       ++retry)
   {
     usleep(kSubscriberAttachSleepUs);
   }
@@ -198,12 +223,21 @@ void PrintFailure(const char* label, const char* reason)
   std::printf("[RESULT] %s: %s\n", label, reason);
 }
 
+void PrintSamples(const char* sample_key, const SampleBuffer& samples)
+{
+  for (uint32_t i = 0; i < samples.count; ++i)
+  {
+    std::printf("[SAMPLE] key=%s value_us=%.6f\n", sample_key, samples.values[i]);
+  }
+}
+
 template <typename Frame>
 void RunTopicCase(const BenchCase<Frame>& bench_case)
 {
   struct CallbackContext
   {
     LatencyStats stats = {};
+    SampleBuffer samples = {};
     std::atomic<uint32_t> received_count{0};
     std::atomic<uint32_t> status{0};
   };
@@ -225,7 +259,9 @@ void RunTopicCase(const BenchCase<Frame>& bench_case)
           return;
         }
 
-        callback_ctx->stats.Add(static_cast<double>(NowNs() - frame->pub_ns) / 1000.0);
+        const double latency_us = static_cast<double>(NowNs() - frame->pub_ns) / 1000.0;
+        callback_ctx->stats.Add(latency_us);
+        callback_ctx->samples.Add(latency_us);
         callback_ctx->received_count.fetch_add(1, std::memory_order_release);
       },
       &ctx);
@@ -261,6 +297,7 @@ void RunTopicCase(const BenchCase<Frame>& bench_case)
   }
 
   ctx.stats.PrintResult(bench_case.topic_label);
+  PrintSamples(bench_case.topic_sample_key, ctx.samples);
 }
 
 template <typename Frame>
@@ -342,7 +379,9 @@ void RunSharedTopicCase(const BenchCase<Frame>& bench_case)
         break;
       }
 
-      result.stats.Add(static_cast<double>(NowNs() - frame->pub_ns) / 1000.0);
+      const double latency_us = static_cast<double>(NowNs() - frame->pub_ns) / 1000.0;
+      result.stats.Add(latency_us);
+      result.samples.Add(latency_us);
     }
 
     (void)WriteAll(stats_pipe[1], &result, sizeof(result));
@@ -404,6 +443,7 @@ void RunSharedTopicCase(const BenchCase<Frame>& bench_case)
   }
 
   result.stats.PrintResult(bench_case.shared_topic_label);
+  PrintSamples(bench_case.shared_topic_sample_key, result.samples);
 }
 
 }  // namespace

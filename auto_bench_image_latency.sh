@@ -8,6 +8,8 @@ DURATION="${DURATION:-30}"          # 每种模式测试时长（秒）
 RATE="${RATE:-30.0}"
 WIDTH="${WIDTH:-1440}"
 HEIGHT="${HEIGHT:-1080}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLOT_TOOL="${PLOT_TOOL:-$SCRIPT_DIR/tools/boxplot_svg.py}"
 
 LOG_DIR="$WS/logs"
 BIN_DIR="$WS/install/image_latency_test/lib/image_latency_test"
@@ -41,7 +43,7 @@ ensure_binaries() {
      [ ! -x "$BIN_DIR/image_subscriber_node" ] || \
      [ ! -x "$BIN_DIR/intra_process_image_latency" ]; then
     echo "[INFO] 找不到可执行文件，开始 colcon build image_latency_test ..."
-    colcon build --packages-select image_latency_test
+    colcon build --packages-select image_latency_test --cmake-args -DCMAKE_BUILD_TYPE=Release
     echo "[INFO] build 完成。"
   fi
 }
@@ -131,6 +133,32 @@ analyze_cpu() {
   ' "$file"
 }
 
+write_cpu_samples() {
+  local input_file="$1"
+  local output_file="$2"
+  awk 'NR > 3 && $8 != "" && $8 != "%CPU" { print $8 }' "$input_file" >"$output_file"
+}
+
+plot_boxplot() {
+  local sample_file="$1"
+  local output_file="$2"
+  local title="$3"
+  local ylabel="$4"
+
+  if [ ! -s "$sample_file" ]; then
+    echo "[WARN] 跳过箱线图，样本文件为空: $sample_file"
+    return
+  fi
+
+  python3 "$PLOT_TOOL" \
+    --input "$sample_file" \
+    --output "$output_file" \
+    --title "$title" \
+    --ylabel "$ylabel"
+
+  echo "[RESULT] boxplot: $output_file"
+}
+
 # ====== 1. 多进程 pub/sub 测试 ======
 
 run_multi_process_test() {
@@ -147,6 +175,10 @@ run_multi_process_test() {
   local SUB_LOG="$LOG_DIR/sub_multi_${ts}.log"
   local CPU_PUB_LOG="$LOG_DIR/cpu_pub_multi_${ts}.log"
   local CPU_SUB_LOG="$LOG_DIR/cpu_sub_multi_${ts}.log"
+  local SAMPLE_MULTI_LOG="$LOG_DIR/samples_multi_${WIDTH}x${HEIGHT}_${ts}.csv"
+  local PLOT_MULTI_LAT="$LOG_DIR/boxplot_multi_latency_${WIDTH}x${HEIGHT}_${ts}.svg"
+  local PLOT_PUB_CPU="$LOG_DIR/boxplot_multi_pub_cpu_${WIDTH}x${HEIGHT}_${ts}.svg"
+  local PLOT_SUB_CPU="$LOG_DIR/boxplot_multi_sub_cpu_${WIDTH}x${HEIGHT}_${ts}.svg"
 
   echo "[INFO] pub log: $PUB_LOG"
   echo "[INFO] sub log: $SUB_LOG"
@@ -157,7 +189,7 @@ run_multi_process_test() {
   local PID_PUB=$!
   echo "[INFO] publisher PID=${PID_PUB}"
 
-  "$BIN_DIR/image_subscriber_node" \
+  ROS_MULTI_PROCESS_SAMPLE_FILE="$SAMPLE_MULTI_LOG" "$BIN_DIR/image_subscriber_node" \
     >"$SUB_LOG" 2>&1 &
   local PID_SUB=$!
   echo "[INFO] subscriber PID=${PID_SUB}"
@@ -182,6 +214,11 @@ run_multi_process_test() {
   analyze_latency "$SUB_LOG" "multi-process sub"
   analyze_cpu "$CPU_PUB_LOG" "multi-process pub"
   analyze_cpu "$CPU_SUB_LOG" "multi-process sub"
+  write_cpu_samples "$CPU_PUB_LOG" "${CPU_PUB_LOG%.log}.csv"
+  write_cpu_samples "$CPU_SUB_LOG" "${CPU_SUB_LOG%.log}.csv"
+  plot_boxplot "$SAMPLE_MULTI_LOG" "$PLOT_MULTI_LAT" "ROS 2 Multi-process ${WIDTH}x${HEIGHT} Latency" "Latency (ms)"
+  plot_boxplot "${CPU_PUB_LOG%.log}.csv" "$PLOT_PUB_CPU" "ROS 2 Multi-process Publisher ${WIDTH}x${HEIGHT} CPU" "CPU (%)"
+  plot_boxplot "${CPU_SUB_LOG%.log}.csv" "$PLOT_SUB_CPU" "ROS 2 Multi-process Subscriber ${WIDTH}x${HEIGHT} CPU" "CPU (%)"
 }
 
 # ====== 2. 单进程 intra_process 测试 ======
@@ -198,10 +235,13 @@ run_intra_process_test() {
 
   local INTRA_LOG="$LOG_DIR/intra_${ts}.log"
   local CPU_INTRA_LOG="$LOG_DIR/cpu_intra_${ts}.log"
+  local SAMPLE_INTRA_LOG="$LOG_DIR/samples_intra_${WIDTH}x${HEIGHT}_${ts}.csv"
+  local PLOT_INTRA_LAT="$LOG_DIR/boxplot_intra_latency_${WIDTH}x${HEIGHT}_${ts}.svg"
+  local PLOT_INTRA_CPU="$LOG_DIR/boxplot_intra_cpu_${WIDTH}x${HEIGHT}_${ts}.svg"
 
   echo "[INFO] intra log: $INTRA_LOG"
 
-  "$BIN_DIR/intra_process_image_latency" \
+  ROS_INTRA_PROCESS_SAMPLE_FILE="$SAMPLE_INTRA_LOG" "$BIN_DIR/intra_process_image_latency" \
     --ros-args -p publish_rate:="${RATE}" -p width:="${WIDTH}" -p height:="${HEIGHT}" \
     >"$INTRA_LOG" 2>&1 &
   local PID_INTRA=$!
@@ -224,11 +264,18 @@ run_intra_process_test() {
   echo "------ 进程内 测试结果 ------"
   analyze_latency "$INTRA_LOG" "intra-process"
   analyze_cpu "$CPU_INTRA_LOG" "intra-process"
+  write_cpu_samples "$CPU_INTRA_LOG" "${CPU_INTRA_LOG%.log}.csv"
+  plot_boxplot "$SAMPLE_INTRA_LOG" "$PLOT_INTRA_LAT" "ROS 2 Intra-process ${WIDTH}x${HEIGHT} Latency" "Latency (ms)"
+  plot_boxplot "${CPU_INTRA_LOG%.log}.csv" "$PLOT_INTRA_CPU" "ROS 2 Intra-process ${WIDTH}x${HEIGHT} CPU" "CPU (%)"
 }
 
 # ===== 主流程 =====
 
 kill_all_test_procs
+if [ ! -x "$PLOT_TOOL" ]; then
+  echo "[ERROR] 箱线图工具不可执行: $PLOT_TOOL"
+  exit 1
+fi
 
 run_multi_process_test
 run_intra_process_test
