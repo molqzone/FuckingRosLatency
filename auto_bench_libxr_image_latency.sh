@@ -5,8 +5,6 @@ WS="${WS:-$HOME/ros2_ws}"
 LOG_DIR="$WS/logs"
 BIN_PATH="$WS/install/libxr_bench/bin/libxr_bench"
 BIN_NAME="$(basename "$BIN_PATH")"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLOT_TOOL="${PLOT_TOOL:-$SCRIPT_DIR/tools/boxplot_svg.py}"
 
 mkdir -p "$LOG_DIR"
 
@@ -85,11 +83,6 @@ main() {
   ensure_pidstat
   ensure_binary
 
-  if [ ! -x "$PLOT_TOOL" ]; then
-    echo "[ERROR] 箱线图工具不可执行: $PLOT_TOOL"
-    exit 1
-  fi
-
   cd "$WS"
   cleanup_processes
 
@@ -98,11 +91,8 @@ main() {
 
   local bench_log="$LOG_DIR/libxr_${ts}.log"
   local cpu_log="$LOG_DIR/cpu_libxr_${ts}.log"
-  local sample_dir="$LOG_DIR/libxr_samples_${ts}"
-  local plot_dir="$LOG_DIR/libxr_boxplots_${ts}"
 
   echo "[INFO] libxr log: $bench_log"
-  mkdir -p "$sample_dir" "$plot_dir"
 
   "$BIN_PATH" >"$bench_log" 2>&1 &
   local bench_pid=$!
@@ -124,88 +114,14 @@ main() {
     echo "[RESULT] libxr_bench: no result lines"
   fi
 
-  awk '
-    /^\[SAMPLE\]/ {
-      key = ""
-      value = ""
-      for (i = 1; i <= NF; ++i) {
-        if ($i ~ /^key=/) {
-          split($i, a, "=")
-          key = a[2]
-        } else if ($i ~ /^value_us=/) {
-          split($i, a, "=")
-          value = a[2]
-        }
-      }
-      if (key != "" && value != "") {
-        print value >> "'"$sample_dir"'/" key ".csv"
-      }
-    }
-  ' "$bench_log"
-
   echo
   echo "------ LibXR CPU ------"
   print_total_cpu "$cpu_log" "libxr_bench" "$BIN_NAME"
-  awk '
-    $1 == "Linux" || $1 == "#" || $1 == "Average:" || NF < 4 { next }
-    $NF != "'"$BIN_NAME"'" { next }
-    {
-      key = $1
-      if ($2 == "AM" || $2 == "PM") {
-        key = $1 " " $2
-      }
-      sample_sum[key] += $(NF - 2)
-    }
-    END {
-      for (k in sample_sum) {
-        print sample_sum[k]
-      }
-    }
-  ' "$cpu_log" >"$sample_dir/libxr_bench_cpu_total.csv"
-
-  local sample_file
-  for sample_file in "$sample_dir"/*.csv; do
-    [ -f "$sample_file" ] || continue
-    local stem
-    stem="$(basename "$sample_file" .csv)"
-    local title
-    local ylabel
-    case "$stem" in
-      topic_1440x1080)
-        title="LibXR Topic 1440x1080"
-        ylabel="Latency (us)"
-        ;;
-      linux_shared_topic_1440x1080)
-        title="LibXR LinuxSharedTopic 1440x1080"
-        ylabel="Latency (us)"
-        ;;
-      topic_320x240)
-        title="LibXR Topic 320x240"
-        ylabel="Latency (us)"
-        ;;
-      linux_shared_topic_320x240)
-        title="LibXR LinuxSharedTopic 320x240"
-        ylabel="Latency (us)"
-        ;;
-      libxr_bench_cpu_total)
-        title="LibXR Benchmark CPU"
-        ylabel="CPU (%)"
-        ;;
-      *)
-        title="$stem"
-        ylabel="Value"
-        ;;
-    esac
-    python3 "$PLOT_TOOL" --input "$sample_file" --output "$plot_dir/$stem.svg" --title "$title" --ylabel "$ylabel"
-    echo "[RESULT] $stem boxplot: $plot_dir/$stem.svg"
-  done
 
   echo
   echo "Logs:"
   echo "  $bench_log"
   echo "  $cpu_log"
-  echo "  $sample_dir"
-  echo "  $plot_dir"
 }
 
 main

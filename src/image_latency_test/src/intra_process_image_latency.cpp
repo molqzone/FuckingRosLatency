@@ -1,7 +1,5 @@
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -17,8 +15,7 @@ class IntraImagePipelineNode : public rclcpp::Node {
 public:
   explicit IntraImagePipelineNode(const rclcpp::NodeOptions &options)
       : rclcpp::Node("intra_process_image_latency", options), width_(1440),
-        height_(1080), publish_rate_(30.0), count_(0), latency_sum_ms_(0.0),
-        sample_file_(nullptr) {
+        height_(1080), publish_rate_(30.0), count_(0), latency_sum_ms_(0.0) {
     // 参数
     this->declare_parameter<int>("width", width_);
     this->declare_parameter<int>("height", height_);
@@ -58,23 +55,8 @@ public:
     timer_ = this->create_wall_timer(
         period, std::bind(&IntraImagePipelineNode::on_timer, this));
 
-    const char * sample_path = std::getenv("ROS_INTRA_PROCESS_SAMPLE_FILE");
-    if (sample_path != nullptr && sample_path[0] != '\0') {
-      sample_file_ = std::fopen(sample_path, "w");
-      if (sample_file_ != nullptr) {
-        std::setvbuf(sample_file_, nullptr, _IOLBF, 0);
-      }
-    }
-
     RCLCPP_INFO(this->get_logger(), "[intra] width=%d height=%d rate=%.2f Hz",
                 width_, height_, publish_rate_);
-  }
-
-  ~IntraImagePipelineNode() override {
-    if (sample_file_ != nullptr) {
-      std::fclose(sample_file_);
-      sample_file_ = nullptr;
-    }
   }
 
 private:
@@ -103,10 +85,6 @@ private:
     ++count_;
     latency_sum_ms_ += latency_ms;
 
-    if (sample_file_ != nullptr) {
-      std::fprintf(sample_file_, "%.6f\n", latency_ms);
-    }
-
     if (count_ % 100 == 0) {
       double avg = latency_sum_ms_ / static_cast<double>(count_);
       RCLCPP_INFO(this->get_logger(),
@@ -126,7 +104,6 @@ private:
 
   std::uint64_t count_;
   double latency_sum_ms_;
-  std::FILE * sample_file_;
 };
 
 int main(int argc, char **argv) {
