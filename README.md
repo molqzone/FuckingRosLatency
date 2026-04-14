@@ -115,69 +115,35 @@ LibXR 数据来自同一次 GitHub Actions 运行。
 
 ## 箱线图
 
-以下 SVG 箱线图来自本次 CI 产物，已整理到仓库内：
+以下 SVG 箱线图来自本次 CI 产物，已整理到仓库内。
 
 ### 1440×1080 延迟
 
-ROS 2 多进程：
+| ROS 2 多进程 | ROS 2 `intra-process` |
+|---|---|
+| ![ROS 2 multi-process latency 1440x1080](plots/ci_24376643892/boxplot_multi_latency_1440x1080_2026-04-14_015339.svg) | ![ROS 2 intra-process latency 1440x1080](plots/ci_24376643892/boxplot_intra_latency_1440x1080_2026-04-14_015412.svg) |
 
-![ROS 2 multi-process latency 1440x1080](plots/ci_24376643892/boxplot_multi_latency_1440x1080_2026-04-14_015339.svg)
-
-ROS 2 `intra-process`：
-
-![ROS 2 intra-process latency 1440x1080](plots/ci_24376643892/boxplot_intra_latency_1440x1080_2026-04-14_015412.svg)
-
-LibXR `Topic`：
-
-![LibXR Topic latency 1440x1080](plots/ci_24376643892/topic_1440x1080.svg)
-
-`LinuxSharedTopic`：
-
-![LibXR LinuxSharedTopic latency 1440x1080](plots/ci_24376643892/linux_shared_topic_1440x1080.svg)
+| LibXR `Topic` | `LinuxSharedTopic` |
+|---|---|
+| ![LibXR Topic latency 1440x1080](plots/ci_24376643892/topic_1440x1080.svg) | ![LibXR LinuxSharedTopic latency 1440x1080](plots/ci_24376643892/linux_shared_topic_1440x1080.svg) |
 
 ### 320×240 延迟
 
-ROS 2 多进程：
+| ROS 2 多进程 | ROS 2 `intra-process` |
+|---|---|
+| ![ROS 2 multi-process latency 320x240](plots/ci_24376643892/boxplot_multi_latency_320x240_2026-04-14_015446.svg) | ![ROS 2 intra-process latency 320x240](plots/ci_24376643892/boxplot_intra_latency_320x240_2026-04-14_015519.svg) |
 
-![ROS 2 multi-process latency 320x240](plots/ci_24376643892/boxplot_multi_latency_320x240_2026-04-14_015446.svg)
-
-ROS 2 `intra-process`：
-
-![ROS 2 intra-process latency 320x240](plots/ci_24376643892/boxplot_intra_latency_320x240_2026-04-14_015519.svg)
-
-LibXR `Topic`：
-
-![LibXR Topic latency 320x240](plots/ci_24376643892/topic_320x240.svg)
-
-`LinuxSharedTopic`：
-
-![LibXR LinuxSharedTopic latency 320x240](plots/ci_24376643892/linux_shared_topic_320x240.svg)
+| LibXR `Topic` | `LinuxSharedTopic` |
+|---|---|
+| ![LibXR Topic latency 320x240](plots/ci_24376643892/topic_320x240.svg) | ![LibXR LinuxSharedTopic latency 320x240](plots/ci_24376643892/linux_shared_topic_320x240.svg) |
 
 ### CPU
 
-ROS 2 多进程 publisher 1440×1080：
-
-![ROS 2 multi-process publisher CPU 1440x1080](plots/ci_24376643892/boxplot_multi_pub_cpu_1440x1080_2026-04-14_015339.svg)
-
-ROS 2 多进程 subscriber 1440×1080：
-
-![ROS 2 multi-process subscriber CPU 1440x1080](plots/ci_24376643892/boxplot_multi_sub_cpu_1440x1080_2026-04-14_015339.svg)
-
-ROS 2 `intra-process` 1440×1080：
-
-![ROS 2 intra-process CPU 1440x1080](plots/ci_24376643892/boxplot_intra_cpu_1440x1080_2026-04-14_015412.svg)
-
-ROS 2 多进程 publisher 320×240：
-
-![ROS 2 multi-process publisher CPU 320x240](plots/ci_24376643892/boxplot_multi_pub_cpu_320x240_2026-04-14_015446.svg)
-
-ROS 2 多进程 subscriber 320×240：
-
-![ROS 2 multi-process subscriber CPU 320x240](plots/ci_24376643892/boxplot_multi_sub_cpu_320x240_2026-04-14_015446.svg)
-
-ROS 2 `intra-process` 320×240：
-
-![ROS 2 intra-process CPU 320x240](plots/ci_24376643892/boxplot_intra_cpu_320x240_2026-04-14_015519.svg)
+| 1440×1080 | 320×240 |
+|---|---|
+| ![ROS 2 multi-process publisher CPU 1440x1080](plots/ci_24376643892/boxplot_multi_pub_cpu_1440x1080_2026-04-14_015339.svg) | ![ROS 2 multi-process publisher CPU 320x240](plots/ci_24376643892/boxplot_multi_pub_cpu_320x240_2026-04-14_015446.svg) |
+| ![ROS 2 multi-process subscriber CPU 1440x1080](plots/ci_24376643892/boxplot_multi_sub_cpu_1440x1080_2026-04-14_015339.svg) | ![ROS 2 multi-process subscriber CPU 320x240](plots/ci_24376643892/boxplot_multi_sub_cpu_320x240_2026-04-14_015446.svg) |
+| ![ROS 2 intra-process CPU 1440x1080](plots/ci_24376643892/boxplot_intra_cpu_1440x1080_2026-04-14_015412.svg) | ![ROS 2 intra-process CPU 320x240](plots/ci_24376643892/boxplot_intra_cpu_320x240_2026-04-14_015519.svg) |
 
 LibXR benchmark 总 CPU：
 
