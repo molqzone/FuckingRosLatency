@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="480" viewBox="0 0 720 480">
+<rect width="100%" height="100%" fill="#f6f4ef"/>
+<text x="360.0" y="36" text-anchor="middle" font-size="24" fill="#1d2a33" font-family="Helvetica, Arial, sans-serif">LibXR Topic 320x240</text>
+<text x="24" y="240.0" transform="rotate(-90 24 240.0)" text-anchor="middle" font-size="16" fill="#3c4c57" font-family="Helvetica, Arial, sans-serif">Latency (us)</text>
+<line x1="110" y1="400" x2="640" y2="400" stroke="#5d6b75" stroke-width="2"/>
+<line x1="110" y1="70" x2="110" y2="400" stroke="#5d6b75" stroke-width="2"/>
+<line x1="102" y1="400.00" x2="640" y2="400.00" stroke="#d8d3c7" stroke-width="1"/>
+<text x="96" y="405.00" text-anchor="end" font-size="13" fill="#56646f" font-family="Helvetica, Arial, sans-serif">0.300</text>
+<line x1="102" y1="317.50" x2="640" y2="317.50" stroke="#d8d3c7" stroke-width="1"/>
+<text x="96" y="322.50" text-anchor="end" font-size="13" fill="#56646f" font-family="Helvetica, Arial, sans-serif">7.624</text>
+<line x1="102" y1="235.00" x2="640" y2="235.00" stroke="#d8d3c7" stroke-width="1"/>
+<text x="96" y="240.00" text-anchor="end" font-size="13" fill="#56646f" font-family="Helvetica, Arial, sans-serif">14.947</text>
+<line x1="102" y1="152.50" x2="640" y2="152.50" stroke="#d8d3c7" stroke-width="1"/>
+<text x="96" y="157.50" text-anchor="end" font-size="13" fill="#56646f" font-family="Helvetica, Arial, sans-serif">22.271</text>
+<line x1="102" y1="70.00" x2="640" y2="70.00" stroke="#d8d3c7" stroke-width="1"/>
+<text x="96" y="75.00" text-anchor="end" font-size="13" fill="#56646f" font-family="Helvetica, Arial, sans-serif">29.595</text>
+<line x1="375.00" y1="382.96" x2="375.00" y2="389.60" stroke="#8b1e3f" stroke-width="3"/>
+<line x1="375.00" y1="398.86" x2="375.00" y2="400.00" stroke="#8b1e3f" stroke-width="3"/>
+<line x1="351.00" y1="382.96" x2="399.00" y2="382.96" stroke="#8b1e3f" stroke-width="3"/>
+<line x1="351.00" y1="400.00" x2="399.00" y2="400.00" stroke="#8b1e3f" stroke-width="3"/>
+<rect x="305.00" y="389.60" width="140.00" height="9.26" fill="#d2b48c" stroke="#8b1e3f" stroke-width="3"/>
+<line x1="305.00" y1="396.83" x2="445.00" y2="396.83" stroke="#8b1e3f" stroke-width="4"/>
+<circle cx="375.00" cy="393.56" r="6" fill="#1d2a33"/>
+<text x="375.00" y="436" text-anchor="middle" font-size="15" fill="#3c4c57" font-family="Helvetica, Arial, sans-serif">n=300</text>
+<text x="630" y="405.00" text-anchor="start" font-size="13" fill="#1d2a33" font-family="Helvetica, Arial, sans-serif">min: 0.300</text>
+<text x="630" y="403.86" text-anchor="start" font-size="13" fill="#1d2a33" font-family="Helvetica, Arial, sans-serif">q1: 0.401</text>
+<text x="630" y="401.83" text-anchor="start" font-size="13" fill="#1d2a33" font-family="Helvetica, Arial, sans-serif">median: 0.581</text>
+<text x="630" y="394.60" text-anchor="start" font-size="13" fill="#1d2a33" font-family="Helvetica, Arial, sans-serif">q3: 1.223</text>
+<text x="630" y="387.96" text-anchor="start" font-size="13" fill="#1d2a33" font-family="Helvetica, Arial, sans-serif">max: 29.595</text>
+<text x="630" y="398.56" text-anchor="start" font-size="13" fill="#1d2a33" font-family="Helvetica, Arial, sans-serif">mean: 0.872</text>
+</svg>
