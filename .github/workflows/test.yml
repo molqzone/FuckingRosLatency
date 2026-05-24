@@ -1,7 +1,20 @@
-name: ROS2 Image Latency Benchmark
+name: ROS2 Iceoryx Image Latency Benchmark
 
 on:
   workflow_dispatch: {}
+  push:
+    branches: [ master ]
+    paths:
+      - ".github/workflows/test.yml"
+      - "auto_bench_image_latency.sh"
+      - "auto_bench_libxr_image_latency.sh"
+      - "src/**"
+  pull_request:
+    paths:
+      - ".github/workflows/test.yml"
+      - "auto_bench_image_latency.sh"
+      - "auto_bench_libxr_image_latency.sh"
+      - "src/**"
 
 jobs:
   bench:
@@ -9,7 +22,8 @@ jobs:
 
     env:
       ROS_DISTRO: humble
-      WS: ${{ github.workspace }}/ros2_ws }
+      WS: ${{ github.workspace }}/ros2_ws
+      RMW_IMPLEMENTATION: rmw_iceoryx_cpp
 
     steps:
       - name: Checkout repo
@@ -17,11 +31,10 @@ jobs:
 
       - name: Install ROS2 Humble and tools
         run: |
-          set -e
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y curl gnupg2 lsb-release
 
-          # ROS2 apt 源
           sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
             -o /usr/share/keyrings/ros-archive-keyring.gpg
 
@@ -32,61 +45,75 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             ros-humble-ros-base \
+            ros-humble-iceoryx-posh \
+            ros-humble-iceoryx-binding-c \
             python3-colcon-common-extensions \
+            python3-rosdep \
             build-essential \
             cmake \
+            git \
             sysstat \
             pkg-config \
             libudev-dev \
             libwpa-client-dev \
             libnm-dev
 
+          sudo rosdep init || true
+          rosdep update
+
       - name: Prepare workspace
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p "$WS/src"
 
-          # 拷贝 ROS2 benchmark 包
           cp -r src/image_latency_test "$WS/src/"
-
-          # 拷贝 libxr_bench 包
           cp -r src/libxr_bench "$WS/src/"
 
-          # 在 libxr_bench 里克隆 LibXR 源码到 libxr 子目录
+          git clone --depth 1 --branch humble https://github.com/ros2/rmw_iceoryx.git "$WS/src/rmw_iceoryx"
+
           cd "$WS/src/libxr_bench"
           git clone --depth 1 https://github.com/Jiu-xiao/libxr.git libxr
 
-          # 拷贝自动测试脚本
           cd "$WS"
           cp "${GITHUB_WORKSPACE}/auto_bench_image_latency.sh" .
           cp "${GITHUB_WORKSPACE}/auto_bench_libxr_image_latency.sh" .
           chmod +x ./auto_bench_image_latency.sh
           chmod +x ./auto_bench_libxr_image_latency.sh
 
-      - name: Build workspace (image_latency_test + libxr_bench)
+      - name: Build workspace (rmw_iceoryx_cpp + benchmarks)
         run: |
-          set -e
+          set -euo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
           cd "$WS"
-          colcon build --packages-select image_latency_test libxr_bench --cmake-args -DCMAKE_BUILD_TYPE=Release
+          rosdep install --from-paths src --ignore-src --rosdistro ${ROS_DISTRO} -y
+          colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select rmw_iceoryx_cpp image_latency_test libxr_bench
 
-      - name: Run ROS benchmark 1440x1080
+      - name: Check iceoryx daemon binary
         run: |
-          set -e
+          set -euo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
-          cd "$WS"
-          ./auto_bench_image_latency.sh
+          source "$WS/install/setup.bash"
+          command -v iox-roudi
 
-      - name: Run ROS benchmark 320x240
+      - name: Run ROS benchmark (iceoryx) 1440x1080
         run: |
-          set -e
+          set -euo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
+          source "$WS/install/setup.bash"
           cd "$WS"
-          WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
+          DURATION=10 ./auto_bench_image_latency.sh
+
+      - name: Run ROS benchmark (iceoryx) 320x240
+        run: |
+          set -euo pipefail
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+          source "$WS/install/setup.bash"
+          cd "$WS"
+          DURATION=10 WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
 
       - name: Run LibXR image latency test
         run: |
-          set -e
+          set -euo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
           cd "$WS"
           ./auto_bench_libxr_image_latency.sh
