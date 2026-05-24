@@ -105,12 +105,13 @@ start_roudi_if_needed() {
 
   local roudi_log="$LOG_DIR/roudi_$(date +%F_%H%M%S).log"
   echo "[INFO] 启动 iox-roudi: $roudi_exec"
-  "$roudi_exec" -l warn >"$roudi_log" 2>&1 &
+  "$roudi_exec" >"$roudi_log" 2>&1 &
   local roudi_pid=$!
 
   sleep 1
   if ! kill -0 "$roudi_pid" 2>/dev/null; then
     echo "[ERROR] iox-roudi 启动失败，日志: $roudi_log"
+    tail -n 80 "$roudi_log" || true
     exit 1
   fi
 
