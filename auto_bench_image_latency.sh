@@ -26,6 +26,15 @@ echo "Log dir  : $LOG_DIR"
 echo "Duration : $DURATION s"
 echo "RMW impl : $RMW_IMPLEMENTATION"
 
+if ! {
+  [ "$WIDTH" -eq 1440 ] && [ "$HEIGHT" -eq 1080 ];
+} && ! {
+  [ "$WIDTH" -eq 320 ] && [ "$HEIGHT" -eq 240 ];
+}; then
+  echo "[ERROR] 固定大小消息 benchmark 仅支持 1440x1080 或 320x240，当前是 ${WIDTH}x${HEIGHT}"
+  exit 1
+fi
+
 # ===== 环境 / 工具检查 =====
 if ! command -v pidstat >/dev/null 2>&1; then
   echo "[INFO] pidstat 未找到，自动安装 sysstat..."
@@ -321,6 +330,7 @@ run_multi_process_test() {
   echo "[INFO] publisher PID=${PID_PUB}"
 
   "$BIN_DIR/image_subscriber_node" \
+    --ros-args -p width:="${WIDTH}" -p height:="${HEIGHT}" \
     >"$SUB_LOG" 2>&1 &
   local PID_SUB=$!
   echo "[INFO] subscriber PID=${PID_SUB}"
