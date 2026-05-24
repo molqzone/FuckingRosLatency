@@ -10,8 +10,11 @@ WIDTH="${WIDTH:-1440}"
 HEIGHT="${HEIGHT:-1080}"
 RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_iceoryx_cpp}"
 ROUDI_BIN="${ROUDI_BIN:-}"
+ICEORYX_ROUDI_CONFIG="${ICEORYX_ROUDI_CONFIG:-}"
+ICEORYX_LARGE_POOL_COUNT="${ICEORYX_LARGE_POOL_COUNT:-12}"
 ROUDI_STARTED_BY_SCRIPT=0
 ROUDI_PID=""
+ROUDI_CONFIG_PATH=""
 
 LOG_DIR="$WS/logs"
 BIN_DIR="$WS/install/image_latency_test/lib/image_latency_test"
@@ -58,6 +61,79 @@ ensure_binaries() {
   fi
 }
 
+round_up_to_8() {
+  local value="$1"
+  echo $(( ((value + 7) / 8) * 8 ))
+}
+
+prepare_roudi_config_if_needed() {
+  if [ "$RMW_IMPLEMENTATION" != "rmw_iceoryx_cpp" ]; then
+    ROUDI_CONFIG_PATH=""
+    return 0
+  fi
+
+  if [ -n "$ICEORYX_ROUDI_CONFIG" ]; then
+    if [ ! -f "$ICEORYX_ROUDI_CONFIG" ]; then
+      echo "[ERROR] ICEORYX_ROUDI_CONFIG 文件不存在: $ICEORYX_ROUDI_CONFIG"
+      exit 1
+    fi
+    ROUDI_CONFIG_PATH="$ICEORYX_ROUDI_CONFIG"
+    echo "[INFO] 使用自定义 RouDi 配置: $ROUDI_CONFIG_PATH"
+    return 0
+  fi
+
+  local frame_bytes=$((WIDTH * HEIGHT * 3))
+  local required_large_payload=$((frame_bytes + 4096))
+  local large_pool_size
+  large_pool_size="$(round_up_to_8 "$required_large_payload")"
+
+  ROUDI_CONFIG_PATH="$LOG_DIR/roudi_config_${WIDTH}x${HEIGHT}.toml"
+
+  {
+    echo "[general]"
+    echo "version = 1"
+    echo
+    echo "[[segment]]"
+    echo
+    echo "[[segment.mempool]]"
+    echo "size = 128"
+    echo "count = 10000"
+    echo
+    echo "[[segment.mempool]]"
+    echo "size = 1024"
+    echo "count = 5000"
+    echo
+    echo "[[segment.mempool]]"
+    echo "size = 16384"
+    echo "count = 1000"
+    echo
+    echo "[[segment.mempool]]"
+    echo "size = 131072"
+    echo "count = 200"
+    echo
+    echo "[[segment.mempool]]"
+    echo "size = 524288"
+    echo "count = 50"
+    echo
+    echo "[[segment.mempool]]"
+    echo "size = 1048576"
+    echo "count = 30"
+    echo
+    echo "[[segment.mempool]]"
+    echo "size = 4194304"
+    echo "count = 10"
+
+    if [ "$large_pool_size" -gt 4194304 ]; then
+      echo
+      echo "[[segment.mempool]]"
+      echo "size = $large_pool_size"
+      echo "count = $ICEORYX_LARGE_POOL_COUNT"
+    fi
+  } > "$ROUDI_CONFIG_PATH"
+
+  echo "[INFO] 生成 RouDi 配置: $ROUDI_CONFIG_PATH (max payload pool=${large_pool_size}, count=${ICEORYX_LARGE_POOL_COUNT})"
+}
+
 resolve_roudi_bin() {
   if [ -n "$ROUDI_BIN" ] && [ -x "$ROUDI_BIN" ]; then
     echo "$ROUDI_BIN"
@@ -96,6 +172,8 @@ start_roudi_if_needed() {
     return 0
   fi
 
+  prepare_roudi_config_if_needed
+
   local roudi_exec
   if ! roudi_exec="$(resolve_roudi_bin)"; then
     echo "[ERROR] RMW_IMPLEMENTATION=rmw_iceoryx_cpp 但未找到 iox-roudi。"
@@ -105,7 +183,11 @@ start_roudi_if_needed() {
 
   local roudi_log="$LOG_DIR/roudi_$(date +%F_%H%M%S).log"
   echo "[INFO] 启动 iox-roudi: $roudi_exec"
-  "$roudi_exec" >"$roudi_log" 2>&1 &
+  if [ -n "$ROUDI_CONFIG_PATH" ]; then
+    "$roudi_exec" -c "$ROUDI_CONFIG_PATH" >"$roudi_log" 2>&1 &
+  else
+    "$roudi_exec" >"$roudi_log" 2>&1 &
+  fi
   local roudi_pid=$!
 
   sleep 1
@@ -245,6 +327,18 @@ run_multi_process_test() {
 
   sleep 2
 
+  if ! kill -0 "$PID_PUB" 2>/dev/null; then
+    echo "[ERROR] publisher 启动后立即退出。日志尾部："
+    tail -n 80 "$PUB_LOG" || true
+    return 1
+  fi
+
+  if ! kill -0 "$PID_SUB" 2>/dev/null; then
+    echo "[ERROR] subscriber 启动后立即退出。日志尾部："
+    tail -n 80 "$SUB_LOG" || true
+    return 1
+  fi
+
   pidstat -u 1 -p "$PID_PUB" >"$CPU_PUB_LOG" &
   local PID_PIDSTAT_PUB=$!
   pidstat -u 1 -p "$PID_SUB" >"$CPU_SUB_LOG" &
@@ -289,6 +383,12 @@ run_intra_process_test() {
   echo "[INFO] intra_process PID=${PID_INTRA}"
 
   sleep 2
+
+  if ! kill -0 "$PID_INTRA" 2>/dev/null; then
+    echo "[ERROR] intra_process 启动后立即退出。日志尾部："
+    tail -n 80 "$INTRA_LOG" || true
+    return 1
+  fi
 
   pidstat -u 1 -p "$PID_INTRA" >"$CPU_INTRA_LOG" &
   local PID_PIDSTAT_INTRA=$!
