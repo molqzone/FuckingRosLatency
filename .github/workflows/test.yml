@@ -31,7 +31,7 @@ jobs:
 
       - name: Install ROS2 Humble and tools
         run: |
-          set -euo pipefail
+          set -eo pipefail
           sudo apt-get update
           sudo apt-get install -y curl gnupg2 lsb-release
 
@@ -63,7 +63,7 @@ jobs:
 
       - name: Prepare workspace
         run: |
-          set -euo pipefail
+          set -eo pipefail
           mkdir -p "$WS/src"
 
           cp -r src/image_latency_test "$WS/src/"
@@ -82,7 +82,7 @@ jobs:
 
       - name: Build workspace (rmw_iceoryx_cpp + benchmarks)
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
           cd "$WS"
           rosdep install --from-paths src --ignore-src --rosdistro ${ROS_DISTRO} -y
@@ -90,14 +90,14 @@ jobs:
 
       - name: Check iceoryx daemon binary
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
           source "$WS/install/setup.bash"
           command -v iox-roudi
 
       - name: Run ROS benchmark (iceoryx) 1440x1080
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
           source "$WS/install/setup.bash"
           cd "$WS"
@@ -105,7 +105,7 @@ jobs:
 
       - name: Run ROS benchmark (iceoryx) 320x240
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
           source "$WS/install/setup.bash"
           cd "$WS"
@@ -113,7 +113,7 @@ jobs:
 
       - name: Run LibXR image latency test
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source /opt/ros/${ROS_DISTRO}/setup.bash
           cd "$WS"
           ./auto_bench_libxr_image_latency.sh
