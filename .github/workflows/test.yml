@@ -23,7 +23,6 @@ jobs:
     env:
       ROS_DISTRO: humble
       WS: ${{ github.workspace }}/ros2_ws
-      RMW_IMPLEMENTATION: rmw_iceoryx_cpp
 
     steps:
       - name: Checkout repo
@@ -101,7 +100,7 @@ jobs:
           source /opt/ros/${ROS_DISTRO}/setup.bash
           source "$WS/install/setup.bash"
           cd "$WS"
-          DURATION=10 ./auto_bench_image_latency.sh
+          RMW_IMPLEMENTATION=rmw_iceoryx_cpp DURATION=10 ./auto_bench_image_latency.sh
 
       - name: Run ROS benchmark (iceoryx) 320x240
         run: |
@@ -109,7 +108,7 @@ jobs:
           source /opt/ros/${ROS_DISTRO}/setup.bash
           source "$WS/install/setup.bash"
           cd "$WS"
-          DURATION=10 WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
+          RMW_IMPLEMENTATION=rmw_iceoryx_cpp DURATION=10 WIDTH=320 HEIGHT=240 ./auto_bench_image_latency.sh
 
       - name: Run LibXR image latency test
         run: |
