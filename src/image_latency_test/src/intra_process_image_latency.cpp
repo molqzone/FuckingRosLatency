@@ -90,31 +90,30 @@ public:
 
     RCLCPP_INFO(
       this->get_logger(),
-      "[intra] fixed-size+loaned mode width=%d height=%d rate=%.2f Hz",
+      "[intra] fixed-size+unique_ptr mode width=%d height=%d rate=%.2f Hz",
       width_, height_, publish_rate_);
   }
 
 private:
   template<typename MessageT>
-  void publish_loaned_message(rclcpp::Publisher<MessageT> & publisher)
+  void publish_unique_message(rclcpp::Publisher<MessageT> & publisher)
   {
-    auto loaned = publisher.borrow_loaned_message();
-    auto & msg = loaned.get();
+    auto msg = std::make_unique<MessageT>();
 
-    msg.seq = seq_;
-    std::memset(msg.data.data(), static_cast<int>(seq_ & 0xFFU), msg.data.size());
-    msg.stamp = this->now();
+    msg->seq = seq_;
+    std::memset(msg->data.data(), static_cast<int>(seq_ & 0xFFU), msg->data.size());
+    msg->stamp = this->now();
 
-    publisher.publish(std::move(loaned));
+    publisher.publish(std::move(msg));
     ++seq_;
   }
 
   void on_timer()
   {
     if (mode_ == BenchMode::Mode1440) {
-      publish_loaned_message(*publisher_1440_);
+      publish_unique_message(*publisher_1440_);
     } else {
-      publish_loaned_message(*publisher_320_);
+      publish_unique_message(*publisher_320_);
     }
   }
 
